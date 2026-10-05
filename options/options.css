@@ -1,0 +1,37 @@
+body.options {
+  display: block;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 24px 20px 40px;
+}
+
+.options h1 { font-size: 18px; margin: 0 0 4px; }
+
+.options section {
+  border-top: 1px solid var(--border);
+  margin-top: 20px;
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.options h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.options .row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.options .row .instance { flex: 0 1 260px; }
+.options .note { margin: 0; color: var(--muted); font-size: 12px; }
+.options .chip { grid-template-columns: 1fr auto; }

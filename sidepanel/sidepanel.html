@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TerrierGPT Companion</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="mark" aria-hidden="true">T</span>
+      <div class="segment" role="radiogroup" aria-label="TerrierGPT instance">
+        <button id="instance-prod" type="button" data-instance="prod" aria-pressed="true">Prod</button>
+        <button id="instance-test" type="button" data-instance="test" aria-pressed="false">Test</button>
+      </div>
+      <span id="test-pill" class="test-pill" hidden>TEST</span>
+      <button id="agent-chip" class="agent-chip" type="button" hidden></button>
+      <span class="spacer"></span>
+      <button id="settings" class="icon-btn" type="button" aria-expanded="false" aria-controls="menu" title="Agents and settings">⋯</button>
+    </header>
+
+    <div id="menu" class="sheet" hidden>
+      <p class="kicker">Agent</p>
+      <label class="sr-only" for="agent">Agent</label>
+      <select id="agent" class="field"></select>
+      <div class="sheet-row">
+        <button id="agent-sync" class="btn" type="button">Sync agents</button>
+        <button id="agent-add" class="btn" type="button">Add agent</button>
+      </div>
+      <form id="agent-form" class="agent-form" hidden>
+        <p>In TerrierGPT, open the agent and use Copy link, then paste it here.</p>
+        <label class="sr-only" for="agent-link">Agent link</label>
+        <input id="agent-link" type="text" class="field" placeholder="https://…?agent_id=…" />
+        <label class="sr-only" for="agent-name">Name</label>
+        <input id="agent-name" type="text" class="field" placeholder="Name (optional)" />
+        <div class="sheet-row">
+          <button id="agent-save" class="btn btn-primary" type="submit">Save</button>
+          <button id="agent-cancel" class="btn" type="button">Cancel</button>
+        </div>
+      </form>
+      <button id="open-settings" class="btn" type="button">Settings</button>
+    </div>
+
+    <main>
+      <section class="card" id="page-card">
+        <p class="kicker" id="page-kicker">Page</p>
+        <h1 id="page-title">This page</h1>
+        <p class="meta" id="page-meta"></p>
+        <div id="grant" hidden>
+          <p id="grant-text"></p>
+          <button id="grant-btn" class="btn btn-primary" type="button">Allow this site</button>
+        </div>
+      </section>
+
+      <div id="actions" class="actions" role="group" aria-label="Ask about this page"></div>
+      <p id="catalog-note" class="catalog-note" hidden></p>
+
+      <div class="tools">
+        <button id="pick" class="btn btn-quiet" type="button" aria-pressed="false">Pick</button>
+        <span id="pick-hint" class="pick-hint" hidden>Click an element. Esc cancels.</span>
+      </div>
+
+      <div id="context" class="context" hidden>
+        <div class="context-head">
+          <span class="kicker">Context</span>
+          <button id="clear" class="link-btn" type="button">Clear</button>
+        </div>
+        <div id="capsules" class="capsules"></div>
+      </div>
+
+      <section id="response" class="answer">
+        <div class="answer-head">
+          <h2 id="answer-label">Answer</h2>
+          <span id="response-agent" class="agent-name" hidden></span>
+          <span class="spacer"></span>
+          <span id="response-spinner" class="spinner" hidden>Working</span>
+          <button id="stop-generation" class="link-btn stop" type="button" hidden>Stop</button>
+          <button id="dismiss-response" class="link-btn" type="button" hidden>Dismiss</button>
+        </div>
+        <div id="response-body" class="answer-body">
+          <p class="placeholder" id="placeholder">The answer stays on this page.</p>
+        </div>
+        <div class="answer-foot" id="answer-foot" hidden>
+          <button id="copy-response" class="btn" type="button">Copy</button>
+          <button id="open-tab-response" class="btn" type="button">Continue in TerrierGPT</button>
+          <button id="send-menu" class="btn" type="button">To Menu</button>
+          <button id="send-recipes" class="btn" type="button">To Recipes</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <form id="ask-form" class="ask">
+        <label class="sr-only" for="instruction">Ask about this page</label>
+        <input id="instruction" class="ask-input" type="text" placeholder="Ask something else about this page" autocomplete="off" />
+        <button id="clipboard" class="btn ask-side" type="button">Clipboard</button>
+        <button id="send" class="ask-send" type="submit">Ask</button>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </footer>
+
+    <script type="module" src="sidepanel.js"></script>
+  </body>
+</html>
