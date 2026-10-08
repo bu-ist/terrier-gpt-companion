@@ -15,7 +15,7 @@ import { INSTANCES, getSettings } from './lib/config.js';
 import { extractFromPage, pickExtraction, presentPage } from './lib/extract.js';
 import { makeCapture, compose, loadCaptures, addCapture } from './lib/prompt.js';
 import { describe } from './lib/messages.js';
-import { chatURL, loadAgents, mergeDiscoveredAgents } from './lib/agents.js';
+import { chatURL, loadAgents, agentsFor, mergeDiscoveredAgents } from './lib/agents.js';
 
 const MENU = {
   askSelection: 'tg-ask-selection',
@@ -260,7 +260,7 @@ async function sendToTerrier({ instruction, captures, openAndFocus = true }) {
   const text = compose(instruction, captures ?? (await loadCaptures()));
   if (!text.trim()) return { ok: false, reason: 'empty-prompt' };
 
-  const agent = settings.agentId ? (await loadAgents()).find((item) => item.id === settings.agentId) : null;
+  const agent = settings.agentId ? agentsFor(await loadAgents(), instance.origin).find((item) => item.id === settings.agentId) : null;
   const stamp = { instance: instance.id, agent: agent?.name ?? null, chars: text.length, via: 'composer' };
   const target = agent ? chatURL(instance.origin, agent.id) : `${instance.origin}/c/new`;
   const { tab, fresh } = await ensureTerrierTab(instance, target, { focus: openAndFocus });
@@ -291,7 +291,7 @@ async function askToTerrier({ instruction, captures }) {
   const text = compose(instruction, captures ?? (await loadCaptures()));
   if (!text.trim()) return { ok: false, reason: 'empty-prompt' };
 
-  const agent = settings.agentId ? (await loadAgents()).find((item) => item.id === settings.agentId) : null;
+  const agent = settings.agentId ? agentsFor(await loadAgents(), instance.origin).find((item) => item.id === settings.agentId) : null;
   const stamp = { instance: instance.id, agent: agent?.name ?? null, chars: text.length, via: 'composer' };
   const freshURL = agent ? chatURL(instance.origin, agent.id) : `${instance.origin}/c/new`;
 
@@ -322,28 +322,85 @@ async function askToTerrier({ instruction, captures }) {
   return { ...result, ...stamp };
 }
 
+/**
+ * Lists the account's agents through an open TerrierGPT tab, or a background
+ * one opened for this and closed again. The content script asks LibreChat's
+ * own API and falls back to reading the page.
+ */
 async function syncAccountAgents() {
   const settings = await getSettings();
   const instance = INSTANCES[settings.instance];
   const matching = await chrome.tabs.query({ url: `${instance.origin}/*` });
   let tabId;
+  let opened = false;
   if (matching.length) {
     const current = await chrome.windows.getLastFocused();
     tabId = (matching.find((tab) => tab.windowId === current.id) ?? matching[0]).id;
   } else {
     const tab = await chrome.tabs.create({ url: `${instance.origin}/c/new`, active: false });
     tabId = tab.id;
+    opened = true;
   }
-  if (!(await waitForContentScript(tabId))) return { ok: false, reason: 'no-content-script' };
 
-  let agents = [];
   try {
-    const response = await chrome.tabs.sendMessage(tabId, { type: 'TG_DISCOVER_AGENTS' });
-    if (response?.ok && Array.isArray(response.agents)) agents = response.agents;
-  } catch {}
+    if (!(await waitForContentScript(tabId, { attempts: 30 }))) return { ok: false, reason: 'no-content-script' };
 
-  const merged = await mergeDiscoveredAgents(agents);
-  return { ok: true, agents: merged, count: merged.length, discoveredCount: agents.length };
+    let response = null;
+    try {
+      response = await chrome.tabs.sendMessage(tabId, { type: 'TG_DISCOVER_AGENTS' });
+    } catch {}
+    if (!response?.ok) return { ok: false, reason: response?.reason || 'agents-api' };
+
+    const found = Array.isArray(response.agents) ? response.agents : [];
+    const merged = await mergeDiscoveredAgents(found, instance.origin);
+    return {
+      ok: true,
+      agents: merged,
+      count: agentsFor(merged, instance.origin).length,
+      discoveredCount: found.length,
+      source: response.source || 'page',
+    };
+  } finally {
+    // A tab the user did not open should not outlive the sync.
+    if (opened) chrome.tabs.remove(tabId).catch(() => {});
+  }
+}
+
+/**
+ * Opens BU Login for the selected instance. `/oauth/openid` is where
+ * LibreChat's own "BU Login" button goes, so this skips the login page.
+ */
+async function signIn() {
+  const settings = await getSettings();
+  const instance = INSTANCES[settings.instance];
+  const [current] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await chrome.tabs.create({
+    url: `${instance.origin}/oauth/openid`,
+    active: true,
+    ...(current ? { index: current.index + 1, windowId: current.windowId } : {}),
+  });
+  return { ok: true, tabId: tab.id };
+}
+
+/**
+ * Whether the selected instance is signed in, as an open TerrierGPT tab sees it.
+ * Nothing is sent to the server: with no TerrierGPT tab open, the answer is unknown.
+ */
+async function sessionState() {
+  const settings = await getSettings();
+  const instance = INSTANCES[settings.instance];
+  const tabs = await chrome.tabs.query({ url: `${instance.origin}/*` });
+  let known = false;
+  for (const tab of tabs) {
+    if (tab.status !== 'complete') continue;
+    try {
+      const pong = await chrome.tabs.sendMessage(tab.id, { type: 'TG_PING' });
+      if (!pong?.ok) continue;
+      known = true;
+      if (pong.signedIn) return { ok: true, known: true, signedIn: true, origin: instance.origin };
+    } catch {}
+  }
+  return { ok: true, known, signedIn: false, origin: instance.origin };
 }
 
 async function openPanel(tab) {
@@ -387,8 +444,11 @@ function showToast(message, tone) {
     'border-radius:12px',
     'max-width:320px',
     'color:#fff',
-    `background:${tone === 'error' ? '#CC0A21' : '#1F2937'}`,
-    'box-shadow:0 8px 24px rgba(0,0,0,.28)',
+    `background:${tone === 'error' ? 'rgba(204,10,33,.88)' : 'rgba(28,28,31,.82)'}`,
+    'backdrop-filter:blur(20px) saturate(180%)',
+    '-webkit-backdrop-filter:blur(20px) saturate(180%)',
+    'border:1px solid rgba(255,255,255,.18)',
+    'box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 10px 30px rgba(0,0,0,.30)',
     'opacity:0;transform:translateY(-6px);transition:opacity .18s ease,transform .18s ease',
   ].join(';');
   root.appendChild(box);
@@ -699,11 +759,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           sendResponse(result);
           break;
         }
+        case 'TG_SIGN_IN':
+          sendResponse(await signIn());
+          break;
+        case 'TG_SESSION':
+          sendResponse(await sessionState());
+          break;
         case 'TG_SYNC_AGENTS':
           sendResponse(await syncAccountAgents());
           break;
         case 'TG_AGENT_DISCOVERED': {
-          if (message.payload?.id) await mergeDiscoveredAgents([message.payload]);
+          let origin = null;
+          try {
+            origin = new URL(_sender?.tab?.url || '').origin;
+          } catch {}
+          if (message.payload?.id) await mergeDiscoveredAgents([message.payload], origin);
           sendResponse({ ok: true });
           break;
         }

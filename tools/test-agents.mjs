@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const { parseAgentId, chatURL, shortLabel, promptURL, MAX_PROMPT_URL, mergeDiscoveredAgents } = await import(
+const { parseAgentId, chatURL, shortLabel, promptURL, MAX_PROMPT_URL, mergeDiscoveredAgents, agentsFor, searchAgents, loadAgents } = await import(
   pathToFileURL(join(ROOT, 'lib/agents.js')).href
 );
 
@@ -65,11 +65,17 @@ check('the dashboard agents URL', parseAgentId(`${ORIGIN}/d/agents/agent_Xy9-tK_
 
 // -------------------------------------------------------- mergeDiscoveredAgents
 let syncStore = { agents: [{ id: 'agent_existing', name: 'Existing Agent' }] };
+let localStore = {};
 globalThis.chrome = {
   storage: {
     sync: {
-      get: async (key) => ({ [key]: syncStore[key] ?? [] }),
+      get: async (key) => ({ [key]: syncStore[key] }),
       set: async (obj) => { Object.assign(syncStore, obj); },
+      remove: async (key) => { delete syncStore[key]; },
+    },
+    local: {
+      get: async (key) => ({ [key]: localStore[key] }),
+      set: async (obj) => { Object.assign(localStore, obj); },
     },
   },
 };
@@ -80,9 +86,32 @@ const merged = await mergeDiscoveredAgents([
   { id: 'invalid_id', name: 'Invalid' },
 ]);
 
-check('merge retains existing custom name', syncStore.agents.find((a) => a.id === 'agent_existing')?.name === 'Existing Agent');
-check('merge adds new discovered agent', syncStore.agents.some((a) => a.id === 'agent_new' && a.name === 'BU Assistant'));
-check('merge rejects invalid agent ids', !syncStore.agents.some((a) => a.id === 'invalid_id'));
+check('a list saved in sync storage moves to local', localStore.agents?.some((a) => a.id === 'agent_existing') && syncStore.agents === undefined);
+check('merge retains existing custom name', localStore.agents.find((a) => a.id === 'agent_existing')?.name === 'Existing Agent');
+check('merge adds new discovered agent', localStore.agents.some((a) => a.id === 'agent_new' && a.name === 'BU Assistant'));
+check('merge rejects invalid agent ids', !localStore.agents.some((a) => a.id === 'invalid_id'));
+
+await mergeDiscoveredAgents([{ id: 'agent_bare', name: 'agent_bare' }], ORIGIN);
+await mergeDiscoveredAgents([{ id: 'agent_bare', name: 'Printer Helper' }], ORIGIN);
+const bare = (await loadAgents()).find((a) => a.id === 'agent_bare');
+check('a page-scan placeholder name is replaced by the real one', bare?.name === 'Printer Helper');
+check('a discovered agent remembers its instance', bare?.origin === ORIGIN);
+
+const scoped = agentsFor([
+  { id: 'agent_a', origin: ORIGIN },
+  { id: 'agent_b', origin: 'https://terriergpt.bu.edu' },
+  { id: 'agent_c' },
+], ORIGIN).map((a) => a.id);
+check('agents from the other instance are hidden', scoped.join() === 'agent_a,agent_c');
+
+const pool = [
+  { id: 'agent_kb', name: 'KB Writer', description: 'Drafts ServiceNow articles' },
+  { id: 'agent_tri', name: 'Ticket triage', description: 'Routes CTS tickets' },
+];
+check('search matches a name', searchAgents(pool, 'kb').map((a) => a.id).join() === 'agent_kb');
+check('search matches a description, any case', searchAgents(pool, 'SERVICENOW').map((a) => a.id).join() === 'agent_kb');
+check('every word has to match', searchAgents(pool, 'ticket kb').length === 0);
+check('an empty query keeps everything', searchAgents(pool, '  ').length === 2);
 
 console.log(failures ? `\n${failures} failing.` : '\nAll agent tests passed.');
 process.exit(failures ? 1 : 0);

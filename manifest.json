@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TerrierGPT Companion",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Read the page you are on, ask TerrierGPT, and keep the answer beside it.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsQKp96CePA3J329NLsHQt4FhXtcs9gHjtDLpwqi8Z9Hm+uDla5vV4WHOqVk4HTzM+UVNUQuWQrPEGOEjNHfJNT+vQqe6GvU9R6YfXyJnHv5Q43gBYtChVi5jD7XmE6hGXoQ61x2ef4dD9NQVsP+Prs7a8UHJVvVzxPoRFakbOvq7EOtkFgnm0fOfILof37r8SgHkb02fFKsqgLm6XgI5inCax0P+e8WZxKYaD/+/2AG/HzeOdYps37ivmJ6Mq+dsAtScIKqfNwV95ZCAzMmMePg5R3mamzM40003WzOpfIUzsii/tlU33T1OrzF+hWinNlpz4k0wXA4G3DQeZO7eYQIDAQAB",
   "minimum_chrome_version": "116",
