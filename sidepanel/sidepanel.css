@@ -165,6 +165,9 @@ svg { width: 16px; height: 16px; flex: none; }
 .tint-surf    { --tint: var(--surf); }
 .tint-violet  { --tint: var(--violet); }
 
+/* Untinted glass mixes with transparent, which would fade the label. */
+.glass:not([class*="tint-"]):is(.btn, .pill, .round) { color: var(--text); }
+
 button {
   font: inherit;
   color: inherit;
@@ -382,6 +385,25 @@ select:focus-visible {
 .agent-empty { color: var(--muted); font-size: 12px; padding: 8px 4px; margin: 0; }
 
 .agent-form { display: flex; flex-direction: column; gap: 8px; }
+
+.btn.wide { width: 100%; justify-content: center; padding: 9px 14px; }
+
+.session-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  padding: 2px 8px 2px 6px;
+  border-radius: 999px;
+  --state: var(--graphite);
+  color: color-mix(in srgb, var(--state) 70%, var(--text));
+  background: color-mix(in srgb, var(--state) 14%, transparent);
+}
+.session-badge i { width: 7px; height: 7px; border-radius: 50%; background: var(--state); box-shadow: 0 0 6px var(--state); }
+.session-badge[data-state="in"] { --state: var(--jade); }
+.session-badge[data-state="out"] { --state: var(--scarlet-soft); }
+.session-detail { margin: 0; color: var(--muted); font-size: 12px; }
 
 .field,
 .instance {
