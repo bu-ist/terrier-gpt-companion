@@ -26,6 +26,12 @@ const el = {
   agentChip: document.getElementById('agent-chip'),
   agentChipName: document.getElementById('agent-chip-name'),
   settings: document.getElementById('settings'),
+  gearMenu: document.getElementById('gear-menu'),
+  sessionBadge: document.getElementById('session-badge'),
+  sessionText: document.getElementById('session-text'),
+  sessionDetail: document.getElementById('session-detail'),
+  signIn: document.getElementById('sign-in'),
+  openSettings: document.getElementById('open-settings'),
   menu: document.getElementById('menu'),
   agentCount: document.getElementById('agent-count'),
   agentSearch: document.getElementById('agent-search'),
@@ -462,7 +468,34 @@ async function chooseAgent(id) {
   say(selectedAgent ? `Asking ${selectedAgent.name}.` : 'Using no agent.', 'ok');
 }
 
+async function refreshSession() {
+  const instance = INSTANCES[currentInstance];
+  let state = null;
+  try {
+    state = await ask({ type: 'TG_SESSION' });
+  } catch {}
+  const signedIn = Boolean(state?.signedIn);
+  const known = Boolean(state?.known);
+  el.sessionBadge.dataset.state = signedIn ? 'in' : known ? 'out' : 'unknown';
+  el.sessionText.textContent = signedIn ? 'Signed in' : known ? 'Signed out' : 'Not checked';
+  el.sessionDetail.textContent = signedIn
+    ? `${instance.label} is signed in. Sign in again if asking says otherwise.`
+    : known
+      ? `${instance.label} is signed out. Sign in, then ask again.`
+      : `No ${instance.label} tab is open, so the session could not be checked.`;
+}
+
+function showGear(open) {
+  el.gearMenu.hidden = !open;
+  el.settings.setAttribute('aria-expanded', String(open));
+  if (open) {
+    showMenu(false);
+    void refreshSession();
+  }
+}
+
 function showMenu(open) {
+  if (open) showGear(false);
   el.menu.hidden = !open;
   el.agentChip.setAttribute('aria-expanded', String(open));
   if (!open) {
@@ -574,6 +607,7 @@ async function runAsk(instruction, { followUp = false, label = 'Answer' } = {}) 
       const message = describe(result?.reason);
       say(message, 'error');
       if (!answerRaw) showAnswer(message);
+      if (result?.reason === 'signed-out') showGear(true);
       return false;
     }
     showAnswer(result.text || answerRaw || '');
@@ -628,7 +662,18 @@ async function consumePending() {
 
 // -------------------------------------------------------------------- events
 
-el.settings.addEventListener('click', () => chrome.runtime.openOptionsPage());
+el.settings.addEventListener('click', () => showGear(el.gearMenu.hidden));
+el.openSettings.addEventListener('click', () => {
+  showGear(false);
+  chrome.runtime.openOptionsPage();
+});
+el.signIn.addEventListener('click', async () => {
+  showGear(false);
+  const result = await ask({ type: 'TG_SIGN_IN' });
+  say(result?.ok
+    ? `BU Login opened in a new tab. Come back here once ${INSTANCES[currentInstance].label} loads.`
+    : describe(result?.reason), result?.ok ? 'ok' : 'error');
+});
 el.agentChip.addEventListener('click', () => showMenu(el.menu.hidden));
 
 el.prod.addEventListener('click', async () => {
@@ -670,6 +715,7 @@ el.agentSync.addEventListener('click', async () => {
       }
     } else {
       say(describe(result?.reason), 'error');
+      if (result?.reason === 'signed-out') showGear(true);
     }
   } catch (error) {
     say(String(error), 'error');
@@ -794,6 +840,7 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if (!el.menu.hidden) showMenu(false);
+  if (!el.gearMenu.hidden) showGear(false);
 });
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -904,9 +951,8 @@ chrome.storage.sync.onChanged.addListener((changes) => {
 
 // Clicking anywhere outside the agent sheet closes it.
 document.addEventListener('pointerdown', (event) => {
-  if (el.menu.hidden) return;
-  if (el.menu.contains(event.target) || el.agentChip.contains(event.target)) return;
-  showMenu(false);
+  if (!el.menu.hidden && !el.menu.contains(event.target) && !el.agentChip.contains(event.target)) showMenu(false);
+  if (!el.gearMenu.hidden && !el.gearMenu.contains(event.target) && !el.settings.contains(event.target)) showGear(false);
 });
 
 chrome.tabs.onActivated.addListener(() => scheduleRefresh());

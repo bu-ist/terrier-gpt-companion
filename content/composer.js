@@ -48,7 +48,7 @@
   };
 
   const NEW_CHAT_PATH = '/c/new';
-  const SIGNED_OUT_PATHS = ['/login', '/register', '/forgot-password', '/reset-password'];
+  const SIGNED_OUT_PATHS = ['/login', '/register', '/forgot-password', '/reset-password', '/oauth'];
 
   function isVisible(el) {
     if (!el) return false;

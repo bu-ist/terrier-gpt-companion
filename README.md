@@ -44,6 +44,7 @@ The panel stays on the page you are reading. TerrierGPT answers in a background 
 - **Right-click** — *Ask TerrierGPT about "…"* opens the panel and asks about the selection. *Open this page in TerrierGPT* opens the panel on the current page.
 - **Omnibox** — type `tg`, then a space, then the question. The answer comes back in the panel.
 - **Keyboard** — `Alt+Shift+T` opens the panel, `Alt+Shift+S` reads the page into it, `Alt+Shift+Y` asks with the primary action.
+- **Account** — the gear. Shows whether the selected instance is signed in, as an open TerrierGPT tab sees it, and has **Sign in with BU Login**, which opens `/oauth/openid` directly and skips the TerrierGPT sign-in page. A signed-out ask or sync opens it for you. Settings is there too.
 - **Prod | Test** — Prod is the default, matching the menu bar app. Test shows an amber TEST badge.
 
 ## Agents

@@ -141,6 +141,11 @@ el.maxChars.addEventListener('change', async () => {
   say('Saved');
 });
 
+document.getElementById('sign-in').addEventListener('click', async () => {
+  const res = await chrome.runtime.sendMessage({ type: 'TG_SIGN_IN' });
+  say(res?.ok ? 'BU Login opened in a new tab.' : describe(res?.reason));
+});
+
 el.syncAgents?.addEventListener('click', async () => {
   say('Scanning TerrierGPT tab for account agents…');
   el.syncAgents.disabled = true;

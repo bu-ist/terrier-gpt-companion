@@ -366,6 +366,43 @@ async function syncAccountAgents() {
   }
 }
 
+/**
+ * Opens BU Login for the selected instance. `/oauth/openid` is where
+ * LibreChat's own "BU Login" button goes, so this skips the login page.
+ */
+async function signIn() {
+  const settings = await getSettings();
+  const instance = INSTANCES[settings.instance];
+  const [current] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await chrome.tabs.create({
+    url: `${instance.origin}/oauth/openid`,
+    active: true,
+    ...(current ? { index: current.index + 1, windowId: current.windowId } : {}),
+  });
+  return { ok: true, tabId: tab.id };
+}
+
+/**
+ * Whether the selected instance is signed in, as an open TerrierGPT tab sees it.
+ * Nothing is sent to the server: with no TerrierGPT tab open, the answer is unknown.
+ */
+async function sessionState() {
+  const settings = await getSettings();
+  const instance = INSTANCES[settings.instance];
+  const tabs = await chrome.tabs.query({ url: `${instance.origin}/*` });
+  let known = false;
+  for (const tab of tabs) {
+    if (tab.status !== 'complete') continue;
+    try {
+      const pong = await chrome.tabs.sendMessage(tab.id, { type: 'TG_PING' });
+      if (!pong?.ok) continue;
+      known = true;
+      if (pong.signedIn) return { ok: true, known: true, signedIn: true, origin: instance.origin };
+    } catch {}
+  }
+  return { ok: true, known, signedIn: false, origin: instance.origin };
+}
+
 async function openPanel(tab) {
   const windowId = tab?.windowId ?? (await chrome.windows.getCurrent()).id;
   await chrome.sidePanel.open({ windowId });
@@ -722,6 +759,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           sendResponse(result);
           break;
         }
+        case 'TG_SIGN_IN':
+          sendResponse(await signIn());
+          break;
+        case 'TG_SESSION':
+          sendResponse(await sessionState());
+          break;
         case 'TG_SYNC_AGENTS':
           sendResponse(await syncAccountAgents());
           break;

@@ -32,6 +32,7 @@
       <symbol id="i-scope" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="6.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></g></symbol>
       <symbol id="i-clipboard" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="5" y="5" width="14" height="16" rx="2.6"/><rect x="8.8" y="3" width="6.4" height="4" rx="1.4"/><path d="M8.5 12h7M8.5 15.5h4.5" stroke-linecap="round"/></g></symbol>
       <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5.5M6 11.5l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-key" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16.5 6.5l2.5 2.5M14 9l2 2"/></g></symbol>
       <symbol id="i-lock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.6"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></g></symbol>
     </svg>
 
@@ -50,7 +51,7 @@
         <svg aria-hidden="true"><use href="#i-person" /></svg>
         <span id="agent-chip-name" class="agent-chip-name" hidden></span>
       </button>
-      <button id="settings" class="glass round" type="button" title="Settings" aria-label="Settings">
+      <button id="settings" class="glass round" type="button" title="Account and settings" aria-label="Account and settings" aria-expanded="false" aria-controls="gear-menu">
         <svg aria-hidden="true"><use href="#i-gear" /></svg>
       </button>
     </header>
@@ -87,6 +88,25 @@
           <button id="agent-save" class="btn btn-primary" type="submit">Save agent</button>
         </div>
       </form>
+    </div>
+
+    <div id="gear-menu" class="sheet glass" hidden>
+      <div class="sheet-head">
+        <p class="kicker">Account</p>
+        <span class="spacer"></span>
+        <span id="session-badge" class="session-badge" data-state="unknown">
+          <i aria-hidden="true"></i><span id="session-text">Checking…</span>
+        </span>
+      </div>
+      <p id="session-detail" class="session-detail"></p>
+      <button id="sign-in" class="btn btn-primary wide" type="button">
+        <svg aria-hidden="true"><use href="#i-key" /></svg>Sign in with BU Login
+      </button>
+      <div class="sheet-row">
+        <button id="open-settings" class="btn glass wide" type="button">
+          <svg aria-hidden="true"><use href="#i-gear" /></svg>Settings
+        </button>
+      </div>
     </div>
 
     <main>
