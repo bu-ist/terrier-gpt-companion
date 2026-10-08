@@ -71,7 +71,12 @@ let store = { agents: [] };
 globalThis.chrome = {
   storage: {
     sync: {
-      get: async (k) => ({ [k]: store[k] ?? [] }),
+      get: async (k) => ({ [k]: undefined }),
+      set: async () => {},
+      remove: async () => {},
+    },
+    local: {
+      get: async (k) => ({ [k]: store[k] }),
       set: async (obj) => { Object.assign(store, obj); },
     },
   },
@@ -82,7 +87,7 @@ await mergeDiscoveredAgents([
   { id: 'agent_writing_tutor', name: 'Writing Tutor', description: 'Essay feedback assistant' },
 ]);
 
-check('merged 2 agents into sync storage', store.agents.length === 2);
+check('merged 2 agents into local storage', store.agents.length === 2);
 check('agent descriptions stored', store.agents[0].description === 'Degree roadmap assistant');
 
 // Merge again with duplicate and new agent
@@ -113,6 +118,7 @@ const failureCodes = [
   'generation-failed',
   'bridge-missing',
   'bridge-failed',
+  'agents-api',
 ];
 
 for (const code of failureCodes) {

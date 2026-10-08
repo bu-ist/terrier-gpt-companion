@@ -35,7 +35,7 @@ const swift = readFileSync(SWIFT, 'utf8');
 check('the manifest key pins the companion id', extensionID === 'bdppgjcngcpkplhgoaokgbjmifpilaek');
 check('the menu allows that same extension id', swift.includes(extensionID));
 check('the host name matches on both sides', swift.includes('com.brianmatute.terriergpt.companion') && manifest.permissions.includes('nativeMessaging'));
-check('version is 0.4.0', manifest.version === '0.4.0');
+check('version is 0.5.0', manifest.version === '0.5.0');
 check('Chrome, Edge, Brave, Vivaldi, and Arc are registered', ['Google Chrome', 'Microsoft Edge', 'Brave Browser', 'Vivaldi', 'Arc'].every((name) => swift.includes(name)));
 
 const worker = readFileSync(join(ROOT, 'service-worker.js'), 'utf8');

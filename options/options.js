@@ -2,6 +2,7 @@
 
 import { INSTANCES, getSettings, setSettings, DEFAULTS } from '../lib/config.js';
 import { loadAgents, removeAgent } from '../lib/agents.js';
+import { describe } from '../lib/messages.js';
 
 const el = {
   instance: document.getElementById('instance'),
@@ -21,7 +22,7 @@ function say(message) {
   clearTimeout(say.timer);
   say.timer = setTimeout(() => {
     el.status.textContent = '';
-  }, 2200);
+  }, 4000);
 }
 
 /** Origins the extension was granted at runtime — the two TerrierGPT hosts are
@@ -36,7 +37,7 @@ async function renderOrigins() {
 
   for (const origin of optional) {
     const li = document.createElement('li');
-    li.className = 'chip';
+    li.className = 'chip glass';
 
     const label = document.createElement('div');
     label.className = 'chip-title';
@@ -64,7 +65,7 @@ async function renderAgents() {
 
   for (const agent of agents) {
     const li = document.createElement('li');
-    li.className = 'chip';
+    li.className = 'chip glass';
 
     const body = document.createElement('div');
     const name = document.createElement('div');
@@ -72,7 +73,8 @@ async function renderAgents() {
     name.textContent = agent.name;
     const id = document.createElement('div');
     id.className = 'chip-meta';
-    id.textContent = agent.id;
+    const where = Object.values(INSTANCES).find((instance) => instance.origin === agent.origin);
+    id.textContent = [where?.label, agent.description, agent.id].filter(Boolean).join(' · ');
     body.append(name, id);
 
     const remove = document.createElement('button');
@@ -139,6 +141,11 @@ el.maxChars.addEventListener('change', async () => {
   say('Saved');
 });
 
+document.getElementById('sign-in').addEventListener('click', async () => {
+  const res = await chrome.runtime.sendMessage({ type: 'TG_SIGN_IN' });
+  say(res?.ok ? 'BU Login opened in a new tab.' : describe(res?.reason));
+});
+
 el.syncAgents?.addEventListener('click', async () => {
   say('Scanning TerrierGPT tab for account agents…');
   el.syncAgents.disabled = true;
@@ -146,9 +153,11 @@ el.syncAgents?.addEventListener('click', async () => {
     const res = await chrome.runtime.sendMessage({ type: 'TG_SYNC_AGENTS' });
     if (res?.ok) {
       await renderAgents();
-      say(res.count ? `Found and synced ${res.count} agent(s).` : 'No custom agents found in session.');
+      say(res.source === 'api'
+        ? `Found ${res.discoveredCount} agent${res.discoveredCount === 1 ? '' : 's'} in your TerrierGPT account.`
+        : `Found ${res.discoveredCount} agent${res.discoveredCount === 1 ? '' : 's'} on the open page. The account list did not answer.`);
     } else {
-      say('Could not sync agents.');
+      say(describe(res?.reason));
     }
   } catch (err) {
     say(String(err));
@@ -157,6 +166,9 @@ el.syncAgents?.addEventListener('click', async () => {
   }
 });
 
+chrome.storage.local.onChanged.addListener((changes) => {
+  if (changes.agents) void renderAgents();
+});
 chrome.permissions.onAdded.addListener(() => void renderOrigins());
 chrome.permissions.onRemoved.addListener(() => void renderOrigins());
 

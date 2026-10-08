@@ -7,58 +7,123 @@
     <link rel="stylesheet" href="sidepanel.css" />
   </head>
   <body>
+    <div class="ambient" aria-hidden="true"></div>
+
+    <svg width="0" height="0" class="sr-only" aria-hidden="true">
+      <defs>
+        <linearGradient id="g-mark" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#f24a4f" />
+          <stop offset="1" stop-color="#cc0a21" />
+        </linearGradient>
+      </defs>
+      <symbol id="i-sparkles" viewBox="0 0 24 24"><path fill="url(#g-mark)" d="M10 2.5l1.7 4.9a4 4 0 0 0 2.4 2.4L19 11.5l-4.9 1.7a4 4 0 0 0-2.4 2.4L10 20.5l-1.7-4.9a4 4 0 0 0-2.4-2.4L1 11.5l4.9-1.7a4 4 0 0 0 2.4-2.4zM19 1.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></symbol>
+      <symbol id="i-person" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.2-3.6 4-5.4 7.5-5.4s6.3 1.8 7.5 5.4"/></g></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M10.3 3h3.4l.5 2.4 1.6.9 2.3-.8 1.7 2.9-1.8 1.6v1.9l1.8 1.6-1.7 2.9-2.3-.8-1.6.9-.5 2.4h-3.4l-.5-2.4-1.6-.9-2.3.8-1.7-2.9 1.8-1.6v-1.9L4.2 8.4l1.7-2.9 2.3.8 1.6-.9z"/><circle cx="12" cy="12" r="2.8"/></g></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/></g></symbol>
+      <symbol id="i-sync" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 0 1 13-5.1M19.5 12a7.5 7.5 0 0 1-13 5.1"/><path d="M17.8 3.5v3.8H14M6.2 20.5v-3.8H10"/></g></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.2" fill="currentColor"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="8.5" y="8.5" width="11" height="11" rx="2.6"/><path d="M15.5 8.5V6.6a2.1 2.1 0 0 0-2.1-2.1H6.6a2.1 2.1 0 0 0-2.1 2.1v6.8c0 1.2.9 2.1 2.1 2.1h1.9"/></g></symbol>
+      <symbol id="i-open" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 4.5h6v6M19.5 4.5L11 13"/><path d="M17.5 14v3.4a2.1 2.1 0 0 1-2.1 2.1H6.6a2.1 2.1 0 0 1-2.1-2.1V8.6c0-1.2.9-2.1 2.1-2.1H10"/></g></symbol>
+      <symbol id="i-menubar" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M3.5 9h17"/><circle cx="16.5" cy="6.8" r=".6" fill="currentColor"/></g></symbol>
+      <symbol id="i-flask" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 3.5h5M10.5 3.5v5.3L5 18.2a1.6 1.6 0 0 0 1.4 2.3h11.2a1.6 1.6 0 0 0 1.4-2.3l-5.5-9.4V3.5"/><path d="M7.4 14.5h9.2"/></g></symbol>
+      <symbol id="i-scope" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="6.5"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></g></symbol>
+      <symbol id="i-clipboard" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="5" y="5" width="14" height="16" rx="2.6"/><rect x="8.8" y="3" width="6.4" height="4" rx="1.4"/><path d="M8.5 12h7M8.5 15.5h4.5" stroke-linecap="round"/></g></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5.5M6 11.5l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-key" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16.5 6.5l2.5 2.5M14 9l2 2"/></g></symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.6"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></g></symbol>
+    </svg>
+
     <header class="bar">
-      <span class="mark" aria-hidden="true">T</span>
-      <div class="segment" role="radiogroup" aria-label="TerrierGPT instance">
+      <div class="identity">
+        <svg class="mark" aria-hidden="true"><use href="#i-sparkles" /></svg>
+        <span class="wordmark">TerrierGPT</span>
+        <span id="test-pill" class="test-pill" title="Non-production test instance" hidden>TEST</span>
+      </div>
+      <span class="spacer"></span>
+      <div class="segment glass" role="radiogroup" aria-label="TerrierGPT instance">
         <button id="instance-prod" type="button" data-instance="prod" aria-pressed="true">Prod</button>
         <button id="instance-test" type="button" data-instance="test" aria-pressed="false">Test</button>
       </div>
-      <span id="test-pill" class="test-pill" hidden>TEST</span>
-      <button id="agent-chip" class="agent-chip" type="button" hidden></button>
-      <span class="spacer"></span>
-      <button id="settings" class="icon-btn" type="button" aria-expanded="false" aria-controls="menu" title="Agents and settings">⋯</button>
+      <button id="agent-chip" class="glass round tint-violet" type="button" aria-expanded="false" aria-controls="menu" title="Choose an agent">
+        <svg aria-hidden="true"><use href="#i-person" /></svg>
+        <span id="agent-chip-name" class="agent-chip-name" hidden></span>
+      </button>
+      <button id="settings" class="glass round" type="button" title="Account and settings" aria-label="Account and settings" aria-expanded="false" aria-controls="gear-menu">
+        <svg aria-hidden="true"><use href="#i-gear" /></svg>
+      </button>
     </header>
 
-    <div id="menu" class="sheet" hidden>
-      <p class="kicker">Agent</p>
-      <label class="sr-only" for="agent">Agent</label>
-      <select id="agent" class="field"></select>
-      <div class="sheet-row">
-        <button id="agent-sync" class="btn" type="button">Sync agents</button>
-        <button id="agent-add" class="btn" type="button">Add agent</button>
+    <div id="menu" class="sheet glass" hidden>
+      <div class="sheet-head">
+        <p class="kicker">Agent</p>
+        <span id="agent-count" class="sheet-count"></span>
+        <span class="spacer"></span>
+        <button id="agent-sync" class="glass round small tint-azure" type="button" title="Sync agents from TerrierGPT" aria-label="Sync agents from TerrierGPT">
+          <svg aria-hidden="true"><use href="#i-sync" /></svg>
+        </button>
+        <button id="agent-add" class="glass round small tint-violet" type="button" title="Add an agent from its link" aria-label="Add an agent from its link" aria-expanded="false">
+          <svg aria-hidden="true"><use href="#i-plus" /></svg>
+        </button>
       </div>
+
+      <label class="search glass inset">
+        <svg aria-hidden="true"><use href="#i-search" /></svg>
+        <span class="sr-only">Search agents</span>
+        <input id="agent-search" type="search" placeholder="Search agents" autocomplete="off" spellcheck="false" />
+      </label>
+
+      <div id="agent-list" class="agent-list" role="listbox" aria-label="Agents"></div>
+
       <form id="agent-form" class="agent-form" hidden>
         <p>In TerrierGPT, open the agent and use Copy link, then paste it here.</p>
         <label class="sr-only" for="agent-link">Agent link</label>
-        <input id="agent-link" type="text" class="field" placeholder="https://…?agent_id=…" />
+        <input id="agent-link" type="text" class="field" placeholder="https://…/c/new?agent_id=…" />
         <label class="sr-only" for="agent-name">Name</label>
         <input id="agent-name" type="text" class="field" placeholder="Name (optional)" />
         <div class="sheet-row">
-          <button id="agent-save" class="btn btn-primary" type="submit">Save</button>
-          <button id="agent-cancel" class="btn" type="button">Cancel</button>
+          <button id="agent-cancel" class="btn glass" type="button">Cancel</button>
+          <button id="agent-save" class="btn btn-primary" type="submit">Save agent</button>
         </div>
       </form>
-      <button id="open-settings" class="btn" type="button">Settings</button>
+    </div>
+
+    <div id="gear-menu" class="sheet glass" hidden>
+      <div class="sheet-head">
+        <p class="kicker">Account</p>
+        <span class="spacer"></span>
+        <span id="session-badge" class="session-badge" data-state="unknown">
+          <i aria-hidden="true"></i><span id="session-text">Checking…</span>
+        </span>
+      </div>
+      <p id="session-detail" class="session-detail"></p>
+      <button id="sign-in" class="btn btn-primary wide" type="button">
+        <svg aria-hidden="true"><use href="#i-key" /></svg>Sign in with BU Login
+      </button>
+      <div class="sheet-row">
+        <button id="open-settings" class="btn glass wide" type="button">
+          <svg aria-hidden="true"><use href="#i-gear" /></svg>Settings
+        </button>
+      </div>
     </div>
 
     <main>
-      <section class="card" id="page-card">
+      <section class="card glass" id="page-card">
         <p class="kicker" id="page-kicker">Page</p>
         <h1 id="page-title">This page</h1>
         <p class="meta" id="page-meta"></p>
         <div id="grant" hidden>
           <p id="grant-text"></p>
-          <button id="grant-btn" class="btn btn-primary" type="button">Allow this site</button>
+          <button id="grant-btn" class="btn btn-primary" type="button">
+            <svg aria-hidden="true"><use href="#i-lock" /></svg>Allow this site
+          </button>
         </div>
       </section>
 
       <div id="actions" class="actions" role="group" aria-label="Ask about this page"></div>
       <p id="catalog-note" class="catalog-note" hidden></p>
-
-      <div class="tools">
-        <button id="pick" class="btn btn-quiet" type="button" aria-pressed="false">Pick</button>
-        <span id="pick-hint" class="pick-hint" hidden>Click an element. Esc cancels.</span>
-      </div>
 
       <div id="context" class="context" hidden>
         <div class="context-head">
@@ -68,34 +133,57 @@
         <div id="capsules" class="capsules"></div>
       </div>
 
-      <section id="response" class="answer">
+      <section id="response" class="answer glass">
         <div class="answer-head">
           <h2 id="answer-label">Answer</h2>
           <span id="response-agent" class="agent-name" hidden></span>
           <span class="spacer"></span>
-          <span id="response-spinner" class="spinner" hidden>Working</span>
-          <button id="stop-generation" class="link-btn stop" type="button" hidden>Stop</button>
-          <button id="dismiss-response" class="link-btn" type="button" hidden>Dismiss</button>
+          <span id="response-spinner" class="working" role="img" aria-label="Working" hidden><i></i><i></i><i></i></span>
+          <button id="stop-generation" class="glass round small tint-scarlet" type="button" title="Stop" aria-label="Stop" hidden>
+            <svg aria-hidden="true"><use href="#i-stop" /></svg>
+          </button>
+          <button id="dismiss-response" class="round small ghost" type="button" title="Dismiss" aria-label="Dismiss" hidden>
+            <svg aria-hidden="true"><use href="#i-close" /></svg>
+          </button>
         </div>
         <div id="response-body" class="answer-body">
-          <p class="placeholder" id="placeholder">The answer stays on this page.</p>
+          <div class="placeholder" id="placeholder">
+            <svg aria-hidden="true"><use href="#i-sparkles" /></svg>
+            <p id="placeholder-text">Pick an action above. The answer stays beside this page.</p>
+          </div>
         </div>
         <div class="answer-foot" id="answer-foot" hidden>
-          <button id="copy-response" class="btn" type="button">Copy</button>
-          <button id="open-tab-response" class="btn" type="button">Continue in TerrierGPT</button>
-          <button id="send-menu" class="btn" type="button">To Menu</button>
-          <button id="send-recipes" class="btn" type="button">To Recipes</button>
+          <button id="copy-response" class="glass round tint-jade" type="button" title="Copy answer" aria-label="Copy answer">
+            <svg aria-hidden="true"><use href="#i-copy" /></svg>
+          </button>
+          <button id="open-tab-response" class="glass round tint-azure" type="button" title="Continue in TerrierGPT" aria-label="Continue in TerrierGPT">
+            <svg aria-hidden="true"><use href="#i-open" /></svg>
+          </button>
+          <button id="send-menu" class="glass round tint-gold" type="button" title="Send to TerrierGPT Menu" aria-label="Send to TerrierGPT Menu">
+            <svg aria-hidden="true"><use href="#i-menubar" /></svg>
+          </button>
+          <button id="send-recipes" class="glass round tint-ember" type="button" title="Send to the CTS Recipes inbox" aria-label="Send to the CTS Recipes inbox">
+            <svg aria-hidden="true"><use href="#i-flask" /></svg>
+          </button>
         </div>
       </section>
     </main>
 
     <footer class="foot">
-      <form id="ask-form" class="ask">
+      <form id="ask-form" class="ask glass">
+        <button id="pick" class="round small ghost" type="button" aria-pressed="false" title="Pick an element on the page" aria-label="Pick an element on the page">
+          <svg aria-hidden="true"><use href="#i-scope" /></svg>
+        </button>
+        <button id="clipboard" class="round small ghost" type="button" title="Add the clipboard as context" aria-label="Add the clipboard as context">
+          <svg aria-hidden="true"><use href="#i-clipboard" /></svg>
+        </button>
         <label class="sr-only" for="instruction">Ask about this page</label>
-        <input id="instruction" class="ask-input" type="text" placeholder="Ask something else about this page" autocomplete="off" />
-        <button id="clipboard" class="btn ask-side" type="button">Clipboard</button>
-        <button id="send" class="ask-send" type="submit">Ask</button>
+        <input id="instruction" class="ask-input" type="text" placeholder="Ask about this page" autocomplete="off" />
+        <button id="send" class="ask-send" type="submit" title="Ask (Enter)" aria-label="Ask">
+          <svg aria-hidden="true"><use href="#i-up" /></svg>
+        </button>
       </form>
+      <p id="pick-hint" class="pick-hint" hidden>Click an element on the page. Esc cancels.</p>
       <p id="status" class="status" role="status" aria-live="polite"></p>
     </footer>
 
