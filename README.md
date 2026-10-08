@@ -37,10 +37,10 @@ The panel stays on the page you are reading. TerrierGPT answers in a background 
 
 - **Page card** — title and host, or, on a classic ServiceNow form, the number, state, caller, and short description. The form is read from the `gsft_main` frame, not the navigator around it.
 - **Actions** — on a ticket: Triage, Reply, Work note, and Summarize, from the CTS Recipes Tickets shelf (`triage-and-reply`, opted in with `surfaces: ["chrome"]`). Open CTS Recipes once so it can write that list. Until the list is there, the panel uses the same prompts baked in as a fallback and says so. On any other page: Summarize and Explain.
-- **Answer** — rendered in the panel. Copy it, or continue the same conversation in the TerrierGPT tab. Asking does not switch away from the ticket, and it does not throw away the page text.
+- **Answer** — rendered in the panel with its formatting (headings, lists, tables, code). Copy it, or continue the same conversation in the TerrierGPT tab. Asking does not switch away from the ticket, and it does not throw away the page text. Each page keeps its last answer for the session, so switching tabs and coming back brings it back.
 - **Context** — a selection on the page, a picked element, the clipboard, or a link, shown as capsules and included with the page. Pick highlights a block; one click adds it. The ticket fields still cover the usual ServiceNow form.
 - **To Menu / To Recipes** — under an answer. To Menu writes a handoff file for the menu-bar app. To Recipes also drops that file in the CTS Recipes inbox and opens it. Both stay on this Mac. The menu app has to have been opened once so it can register the bridge.
-- **Agents** — behind ⋯. Sync from an open TerrierGPT tab, or paste an agent's Copy link.
+- **Agents** — the person button in the header. Search by name or description, sync the whole account list, or paste an agent's Copy link.
 - **Right-click** — *Ask TerrierGPT about "…"* opens the panel and asks about the selection. *Open this page in TerrierGPT* opens the panel on the current page.
 - **Omnibox** — type `tg`, then a space, then the question. The answer comes back in the panel.
 - **Keyboard** — `Alt+Shift+T` opens the panel, `Alt+Shift+S` reads the page into it, `Alt+Shift+Y` asks with the primary action.
@@ -48,11 +48,19 @@ The panel stays on the page you are reading. TerrierGPT answers in a background 
 
 ## Agents
 
-Pick an agent under ⋯ and the question goes to that agent's conversation.
+Open the person button in the header, pick an agent, and the question goes to that agent's conversation.
 
-1. **Sync agents** reads agent links in the open TerrierGPT tab. It does not scan the page's storage, and it does not use the document title as the agent's name.
-2. **Add agent** takes the link from the agent's **Copy link** button.
-3. Saved agents live in Chrome sync storage. New chat, in Settings, still starts a fresh conversation for each question. An agent link already opens its own conversation.
+1. **Sync** (↻) asks LibreChat's own list endpoint, `GET /api/agents?requiredPermission=1`, from inside a
+   TerrierGPT tab, so it returns every agent the account can use — not only the ones visible on screen.
+   The API takes a bearer token that LibreChat keeps in page memory, so the content script mints one the
+   way the page does on every load, `POST /api/auth/refresh` with the session cookie. The token never
+   leaves that function. If no TerrierGPT tab is open, a background one is opened and closed again.
+   If the API does not answer, it falls back to reading agent links on the open page and says so.
+2. **Search** filters by name, description, or id. Enter picks the first match.
+3. **Add** (+) takes the link from the agent's **Copy link** button.
+4. Agent ids belong to one instance, so each saved agent remembers its origin and the list shows only the
+   agents for Prod or Test, whichever is selected. The list lives in local storage: sync storage caps one
+   key at 8 KB, which a synced account list passes at a few dozen agents.
 
 ## How the prompt gets there
 
@@ -135,6 +143,30 @@ python3 tools/generate_icons.py
 
 After editing, press the reload button on `chrome://extensions`. Content script changes
 also need the TerrierGPT tab reloaded.
+
+## Design
+
+The panel uses the same Liquid Glass vocabulary as the menu bar app (`TGDesign.swift`): a faint drifting
+mesh behind everything (AmbientBackdrop), translucent surfaces that blur it, a sheen from the top, a lit
+rim, and a coloured bloom under each tinted control. Scarlet is the one primary per surface. Secondary
+actions are icon buttons with tooltips. Reduce Motion stops the mesh and the breathing dots. Reduce
+Transparency swaps the glass for an opaque fill.
+
+## 0.5 fixes
+
+| Symptom | Cause |
+|---|---|
+| Sync agents found almost nothing | LibreChat 0.8.8 renders agents in the model selector without ids in the DOM, and the marketplace is off on TerrierGPT. Sync now uses the account's agent list API |
+| "Synced N agents" when nothing was found | The count was the saved list, not what the sync found |
+| Sync left a stray TerrierGPT tab open | A background tab opened for the sync was never closed |
+| A big agent list could not be saved | Sync storage caps a key at 8 KB. Moved to local storage, with migration |
+| A Test agent was offered on Prod | Agents had no instance. They now remember their origin |
+| Pick did nothing the second time on the same page | Re-injecting `picker.js` threw "Identifier has already been declared". Both content scripts are now wrapped |
+| A follow-up in the same conversation returned the previous answer | The reader took the last assistant turn on screen. It now counts the turns before Send |
+| Answers lost their lists, headings, and tables | The answer was read with `innerText`. It is now converted from the rendered HTML to Markdown |
+| The answer vanished after a tab switch, including after Continue in TerrierGPT | Any URL change cleared it. Answers are kept per page for the session |
+| Send or stop could be missed on LibreChat 0.8.8 | Added `composer-send-button`, `composer-stop-button`, and the new new-chat test ids |
+| Agent conversations opened in-app were not remembered | Only `popstate` was watched, and LibreChat navigates with `pushState` |
 
 ## Verified in Chrome
 

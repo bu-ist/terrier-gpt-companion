@@ -7,9 +7,21 @@
     <link rel="stylesheet" href="options.css" />
   </head>
   <body class="options">
-    <h1>TerrierGPT Companion</h1>
+    <div class="ambient" aria-hidden="true"></div>
+    <header class="options-head">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">
+        <defs>
+          <linearGradient id="g-mark" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#f24a4f" />
+            <stop offset="1" stop-color="#cc0a21" />
+          </linearGradient>
+        </defs>
+        <path fill="url(#g-mark)" d="M10 2.5l1.7 4.9a4 4 0 0 0 2.4 2.4L19 11.5l-4.9 1.7a4 4 0 0 0-2.4 2.4L10 20.5l-1.7-4.9a4 4 0 0 0-2.4-2.4L1 11.5l4.9-1.7a4 4 0 0 0 2.4-2.4zM19 1.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/>
+      </svg>
+      <h1>TerrierGPT Companion</h1>
+    </header>
 
-    <section>
+    <section class="glass">
       <h2>Instance</h2>
       <label class="row" for="instance">
         <span>Send prompts to</span>
@@ -18,7 +30,7 @@
       <p class="note" id="instance-note"></p>
     </section>
 
-    <section>
+    <section class="glass">
       <h2>Sending</h2>
       <label class="check"><input type="checkbox" id="new-chat" /> Start a new conversation for each question</label>
       <p class="note">
@@ -27,7 +39,7 @@
       </p>
     </section>
 
-    <section>
+    <section class="glass">
       <h2>Page capture</h2>
       <label class="row" for="max-chars">
         <span>Maximum characters per page</span>
@@ -36,20 +48,20 @@
       <p class="note">Longer pages are cut at this length, and the chip says so.</p>
     </section>
 
-    <section>
+    <section class="glass">
       <h2>Agents</h2>
       <p class="note">
-        Agents created in your account can be synced automatically from an open TerrierGPT tab,
-        or added manually by pasting the link from an agent's <strong>Copy link</strong> button.
+        Sync reads every agent your TerrierGPT account can use, on the instance selected above.
+        You can also paste the link from an agent's <strong>Copy link</strong> button in the panel.
       </p>
       <div class="agent-actions">
-        <button id="sync-agents" class="btn btn-quiet" type="button">⟳ Sync agents from TerrierGPT</button>
+        <button id="sync-agents" class="btn glass tint-azure" type="button">Sync agents from TerrierGPT</button>
       </div>
       <ul id="agents" class="chips"></ul>
       <p class="note" id="no-agents" hidden>No agents saved yet.</p>
     </section>
 
-    <section>
+    <section class="glass">
       <h2>Site access</h2>
       <p class="note">
         Access is granted one site at a time, from the panel, when you first capture from it.
