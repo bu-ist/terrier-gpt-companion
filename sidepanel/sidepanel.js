@@ -7,27 +7,35 @@
 import { INSTANCES, getSettings, setSettings } from '../lib/config.js';
 import { SOURCE, makeCapture, loadCaptures, saveCaptures, addCapture } from '../lib/prompt.js';
 import { describe } from '../lib/messages.js';
-import { parseAgentId, loadAgents, addAgent } from '../lib/agents.js';
+import { parseAgentId, loadAgents, addAgent, agentsFor, searchAgents } from '../lib/agents.js';
 import { actionsFor, primaryAction, usesCatalog } from '../lib/actions.js';
 import { renderMarkdown } from '../lib/markdown.js';
 
 const SELECTION_ID = 'auto-selection';
+/** Answers kept per page, so switching tabs and coming back does not lose one. */
+const ANSWERS_KEY = 'answers';
+const ANSWERS_KEPT = 20;
+/** One accent per action, in order, like the Mac app's dock. The primary stays scarlet. */
+const ACTION_TINTS = ['azure', 'violet', 'jade', 'surf', 'ember', 'gold'];
+const AVATAR_HUES = ['#8f5cfa', '#338aff', '#21cc85', '#ff7833', '#2ecced', '#cc0a21', '#ffbd38'];
 
 const el = {
   prod: document.getElementById('instance-prod'),
   test: document.getElementById('instance-test'),
   testPill: document.getElementById('test-pill'),
   agentChip: document.getElementById('agent-chip'),
+  agentChipName: document.getElementById('agent-chip-name'),
   settings: document.getElementById('settings'),
   menu: document.getElementById('menu'),
-  agent: document.getElementById('agent'),
+  agentCount: document.getElementById('agent-count'),
+  agentSearch: document.getElementById('agent-search'),
+  agentList: document.getElementById('agent-list'),
   agentSync: document.getElementById('agent-sync'),
   agentAdd: document.getElementById('agent-add'),
   agentForm: document.getElementById('agent-form'),
   agentLink: document.getElementById('agent-link'),
   agentName: document.getElementById('agent-name'),
   agentCancel: document.getElementById('agent-cancel'),
-  openSettings: document.getElementById('open-settings'),
   card: document.getElementById('page-card'),
   kicker: document.getElementById('page-kicker'),
   title: document.getElementById('page-title'),
@@ -49,6 +57,7 @@ const el = {
   dismiss: document.getElementById('dismiss-response'),
   responseBody: document.getElementById('response-body'),
   placeholder: document.getElementById('placeholder'),
+  placeholderText: document.getElementById('placeholder-text'),
   answerFoot: document.getElementById('answer-foot'),
   copy: document.getElementById('copy-response'),
   openTab: document.getElementById('open-tab-response'),
@@ -75,6 +84,8 @@ let refreshSeq = 0;
 let refreshTimer = null;
 let holdRefresh = 0;
 let consumeLock = null;
+let currentInstance = 'prod';
+let selectedAgent = null;
 
 function say(message, tone = 'info') {
   el.status.textContent = message || '';
@@ -157,21 +168,24 @@ function renderActions() {
   el.catalogNote.textContent = note;
   const ready = canRead() || el.capsules.childElementCount > 0;
   el.actions.replaceChildren();
+  let tint = 0;
   for (const action of actions) {
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = action.primary ? 'pill pill-primary' : 'pill';
+    button.className = action.primary
+      ? 'pill pill-primary'
+      : `pill glass tint-${ACTION_TINTS[tint++ % ACTION_TINTS.length]}`;
     button.textContent = action.label;
     button.disabled = asking || !ready;
     button.addEventListener('click', () => {
-      el.menu.hidden = true;
-      el.settings.setAttribute('aria-expanded', 'false');
+      showMenu(false);
       void runAsk(action.prompt, { followUp: false, label: action.label });
     });
     el.actions.append(button);
   }
   el.send.disabled = asking;
   el.pick.disabled = asking || handing;
+  el.clipboard.disabled = asking;
   el.sendMenu.disabled = handing;
   el.sendRecipes.disabled = handing;
 }
@@ -189,26 +203,31 @@ function renderCapsules(captures) {
   for (const capture of captures) {
     const meta = SOURCE[capture.source] ?? { label: capture.source, tint: 'azure' };
     const row = document.createElement('div');
-    row.className = 'capsule';
+    row.className = `capsule glass tint-${meta.tint === 'blue' ? 'azure' : meta.tint === 'emerald' ? 'jade' : meta.tint === 'cyan' ? 'surf' : meta.tint}`;
     row.dataset.enabled = String(capture.enabled);
-    row.style.boxShadow = `inset 2px 0 0 ${tintColor(meta.tint)}`;
 
     const toggle = document.createElement('button');
     toggle.type = 'button';
-    toggle.textContent = capture.enabled ? '●' : '○';
-    toggle.title = capture.enabled ? 'Included in the prompt' : 'Left out of the prompt';
+    toggle.title = capture.enabled ? 'Included in the prompt. Click to leave it out.' : 'Left out of the prompt. Click to include it.';
+    toggle.setAttribute('aria-pressed', String(capture.enabled));
+    toggle.setAttribute('aria-label', `${meta.label}: include in the prompt`);
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    toggle.append(dot);
     toggle.addEventListener('click', () => void setEnabled(capture.id, !capture.enabled));
 
     const label = document.createElement('span');
     label.className = 'capsule-label';
     const chars = `${capture.body.length.toLocaleString()} characters`;
-    label.textContent = `${meta.label} · ${chars}`;
-    label.title = capture.body.slice(0, 240);
+    const name = capture.title && capture.title !== meta.label ? `${meta.label} · ${capture.title}` : meta.label;
+    label.textContent = name;
+    label.title = `${name} · ${chars}\n\n${capture.body.slice(0, 240)}`;
 
     const remove = document.createElement('button');
     remove.type = 'button';
-    remove.textContent = '×';
     remove.title = 'Remove';
+    remove.setAttribute('aria-label', `Remove ${name}`);
+    remove.append(icon('i-close'));
     remove.addEventListener('click', () => void removeCapture(capture.id));
 
     row.append(toggle, label, remove);
@@ -216,15 +235,13 @@ function renderCapsules(captures) {
   }
 }
 
-function tintColor(name) {
-  return {
-    violet: '#8f5cfa',
-    blue: '#338aff',
-    cyan: '#2ecced',
-    emerald: '#21cc85',
-    scarlet: '#cc0a21',
-    azure: '#338aff',
-  }[name] || '#8c94a6';
+function icon(id) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('aria-hidden', 'true');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', `#${id}`);
+  svg.append(use);
+  return svg;
 }
 
 async function refreshCapsules() {
@@ -293,10 +310,14 @@ async function forceSelection(text, url) {
 
 function showAnswer(raw, { streaming = false } = {}) {
   answerRaw = raw || '';
+  el.responseBody.classList.toggle('streaming', streaming && Boolean(answerRaw));
   if (!answerRaw) {
     el.responseBody.replaceChildren(el.placeholder);
     el.placeholder.hidden = false;
-    el.placeholder.textContent = asking ? 'Asking TerrierGPT…' : 'The answer stays on this page.';
+    el.placeholder.classList.toggle('busy', asking);
+    el.placeholderText.textContent = asking
+      ? 'Asking TerrierGPT in a background tab…'
+      : 'Pick an action above. The answer stays beside this page.';
     el.answerFoot.hidden = true;
     el.dismiss.hidden = true;
     return;
@@ -304,8 +325,8 @@ function showAnswer(raw, { streaming = false } = {}) {
   el.placeholder.hidden = true;
   el.responseBody.innerHTML = renderMarkdown(answerRaw);
   if (streaming) el.responseBody.scrollTop = el.responseBody.scrollHeight;
-  el.answerFoot.hidden = false;
-  el.dismiss.hidden = false;
+  el.answerFoot.hidden = streaming;
+  el.dismiss.hidden = streaming;
 }
 
 function clearAnswer() {
@@ -315,42 +336,150 @@ function clearAnswer() {
   el.responseAgent.hidden = true;
 }
 
+async function loadAnswers() {
+  const { [ANSWERS_KEY]: answers = {} } = await chrome.storage.session.get(ANSWERS_KEY);
+  return answers;
+}
+
+/** Remembers the answer for the page it was asked about. */
+async function rememberAnswer(url, entry) {
+  if (!url) return;
+  const answers = await loadAnswers();
+  if (entry) answers[url] = { ...entry, at: Date.now() };
+  else delete answers[url];
+  const kept = Object.entries(answers)
+    .sort((a, b) => (b[1]?.at ?? 0) - (a[1]?.at ?? 0))
+    .slice(0, ANSWERS_KEPT);
+  await chrome.storage.session.set({ [ANSWERS_KEY]: Object.fromEntries(kept) });
+}
+
+async function restoreAnswer(url) {
+  const saved = url ? (await loadAnswers())[url] : null;
+  if (!saved?.text) {
+    clearAnswer();
+    return;
+  }
+  showAnswer(saved.text);
+  el.answerLabel.textContent = saved.label || 'Answer';
+  el.responseAgent.hidden = !saved.agent;
+  el.responseAgent.textContent = saved.agent || '';
+}
+
 // -------------------------------------------------------------------- agents
 
+function hueFor(id) {
+  let hash = 0;
+  for (const char of String(id)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return AVATAR_HUES[hash % AVATAR_HUES.length];
+}
+
+function agentRow({ id, name, description, selected }) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'agent-row';
+  row.setAttribute('role', 'option');
+  row.setAttribute('aria-selected', String(selected));
+  row.dataset.id = id;
+
+  const avatar = document.createElement('span');
+  avatar.className = 'avatar';
+  if (id) {
+    avatar.style.setProperty('--hue', hueFor(id));
+    avatar.textContent = (name.trim()[0] || 'A').toUpperCase();
+  } else {
+    avatar.style.setProperty('--hue', '#cc0a21');
+    avatar.append(icon('i-sparkles'));
+  }
+
+  const text = document.createElement('span');
+  text.className = 'agent-text';
+  const title = document.createElement('span');
+  title.className = 'agent-title';
+  title.textContent = name;
+  text.append(title);
+  if (description) {
+    const desc = document.createElement('span');
+    desc.className = 'agent-desc';
+    desc.textContent = description;
+    text.append(desc);
+    row.title = `${name}\n${description}`;
+  }
+
+  const tick = icon('i-check');
+  tick.classList.add('tick');
+  row.append(avatar, text, tick);
+  row.addEventListener('click', () => void chooseAgent(id || null));
+  return row;
+}
+
 async function renderAgents(selectedId) {
-  const agents = await loadAgents();
+  const origin = INSTANCES[currentInstance]?.origin;
+  const agents = agentsFor(await loadAgents(), origin);
   const settings = await getSettings();
   const wanted = selectedId === undefined ? settings.agentId : selectedId;
-  el.agent.replaceChildren();
+  selectedAgent = agents.find((agent) => agent.id === wanted) ?? null;
+  if (wanted && !selectedAgent) await setSettings({ agentId: null });
 
-  const none = document.createElement('option');
-  none.value = '';
-  none.textContent = agents.length ? 'No agent' : 'No agents yet';
-  el.agent.append(none);
-
-  for (const agent of agents) {
-    const option = document.createElement('option');
-    option.value = agent.id;
-    option.textContent = agent.name;
-    el.agent.append(option);
+  el.agentCount.textContent = agents.length ? `${agents.length}` : '';
+  const query = el.agentSearch.value;
+  const shown = searchAgents(agents, query);
+  el.agentList.replaceChildren();
+  if (!query.trim()) {
+    el.agentList.append(agentRow({
+      id: '',
+      name: 'No agent',
+      description: 'Whatever model TerrierGPT is set to.',
+      selected: !selectedAgent,
+    }));
   }
-  el.agent.value = agents.some((agent) => agent.id === wanted) ? wanted : '';
-  if (wanted && el.agent.value !== wanted) await setSettings({ agentId: null });
+  for (const agent of shown) {
+    el.agentList.append(agentRow({
+      id: agent.id,
+      name: agent.name,
+      description: agent.description,
+      selected: agent.id === selectedAgent?.id,
+    }));
+  }
+  if (!agents.length || !shown.length) {
+    const empty = document.createElement('p');
+    empty.className = 'agent-empty';
+    empty.textContent = agents.length
+      ? `No agent matches “${query.trim()}”.`
+      : 'No agents yet. Sync them from TerrierGPT, or add one from its link.';
+    el.agentList.append(empty);
+  }
 
-  const selected = agents.find((agent) => agent.id === el.agent.value);
-  el.agentChip.hidden = !selected;
-  el.agentChip.textContent = selected ? selected.name : '';
-  el.agentChip.title = selected ? selected.name : '';
+  el.agentChipName.hidden = !selectedAgent;
+  el.agentChipName.textContent = selectedAgent?.name ?? '';
+  el.agentChip.title = selectedAgent ? `Agent: ${selectedAgent.name}` : 'Choose an agent';
+  el.agentChip.setAttribute('aria-label', el.agentChip.title);
+}
+
+async function chooseAgent(id) {
+  await setSettings({ agentId: id });
+  await renderAgents(id);
+  showMenu(false);
+  say(selectedAgent ? `Asking ${selectedAgent.name}.` : 'Using no agent.', 'ok');
 }
 
 function showMenu(open) {
   el.menu.hidden = !open;
-  el.settings.setAttribute('aria-expanded', String(open));
-  if (!open) el.agentForm.hidden = true;
+  el.agentChip.setAttribute('aria-expanded', String(open));
+  if (!open) {
+    el.agentForm.hidden = true;
+    el.agentAdd.setAttribute('aria-expanded', 'false');
+    if (el.agentSearch.value) {
+      el.agentSearch.value = '';
+      void renderAgents();
+    }
+  } else {
+    requestAnimationFrame(() => el.agentSearch.focus());
+  }
 }
 
 function applyInstance(id) {
   const instance = INSTANCES[id] ? id : 'prod';
+  currentInstance = instance;
   el.prod.setAttribute('aria-pressed', String(instance === 'prod'));
   el.test.setAttribute('aria-pressed', String(instance === 'test'));
   el.testPill.hidden = instance !== 'test';
@@ -372,7 +501,7 @@ async function refreshPage() {
   if (seq !== refreshSeq) return;
 
   const nextURL = info?.page?.url || info?.tab?.url || '';
-  if (shownURL && nextURL && shownURL !== nextURL && !asking) clearAnswer();
+  if (nextURL && shownURL !== nextURL && !asking) await restoreAnswer(nextURL);
   if (nextURL) shownURL = nextURL;
 
   renderCard(info);
@@ -423,13 +552,10 @@ async function runAsk(instruction, { followUp = false, label = 'Answer' } = {}) 
   stopped = false;
   renderActions();
   el.answerLabel.textContent = label || 'Answer';
-  const agentLabel = el.agent.selectedOptions[0]?.textContent;
-  if (el.agent.value && agentLabel) {
-    el.responseAgent.hidden = false;
-    el.responseAgent.textContent = agentLabel;
-  } else {
-    el.responseAgent.hidden = true;
-  }
+  const agentLabel = selectedAgent?.name ?? '';
+  const askedURL = currentPage?.url || shownURL;
+  el.responseAgent.hidden = !agentLabel;
+  el.responseAgent.textContent = agentLabel;
   el.spinner.hidden = false;
   el.stop.hidden = false;
   showAnswer('');
@@ -451,8 +577,12 @@ async function runAsk(instruction, { followUp = false, label = 'Answer' } = {}) 
       return false;
     }
     showAnswer(result.text || answerRaw || '');
-    if (result.text) say('Answer received.');
-    else say('TerrierGPT returned no text.', 'error');
+    if (result.text) {
+      say('Answer received.', 'ok');
+      await rememberAnswer(askedURL, { text: result.text, label: label || 'Answer', agent: agentLabel });
+    } else {
+      say('TerrierGPT returned no text.', 'error');
+    }
     return Boolean(result.text);
   } catch (error) {
     if (answerRaw) say('The connection dropped. The text above is what arrived.', 'error');
@@ -465,6 +595,8 @@ async function runAsk(instruction, { followUp = false, label = 'Answer' } = {}) 
     asking = false;
     el.spinner.hidden = true;
     el.stop.hidden = true;
+    if (answerRaw) showAnswer(answerRaw);
+    else showAnswer('');
     renderActions();
   }
 }
@@ -496,25 +628,28 @@ async function consumePending() {
 
 // -------------------------------------------------------------------- events
 
-el.settings.addEventListener('click', () => showMenu(el.menu.hidden));
-el.agentChip.addEventListener('click', () => showMenu(true));
-el.openSettings.addEventListener('click', () => chrome.runtime.openOptionsPage());
+el.settings.addEventListener('click', () => chrome.runtime.openOptionsPage());
+el.agentChip.addEventListener('click', () => showMenu(el.menu.hidden));
 
 el.prod.addEventListener('click', async () => {
   await setSettings({ instance: 'prod' });
   applyInstance('prod');
+  await renderAgents();
   say('Using TerrierGPT.');
 });
 el.test.addEventListener('click', async () => {
   await setSettings({ instance: 'test' });
   applyInstance('test');
+  await renderAgents();
   say('Using TerrierGPT Test.');
 });
 
-el.agent.addEventListener('change', async () => {
-  await setSettings({ agentId: el.agent.value || null });
-  await renderAgents(el.agent.value || null);
-  say(el.agent.value ? `Using ${el.agent.selectedOptions[0].textContent}.` : 'Using no agent.');
+el.agentSearch.addEventListener('input', () => void renderAgents());
+el.agentSearch.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  const first = el.agentList.querySelector('.agent-row');
+  if (first) first.click();
 });
 
 el.agentSync.addEventListener('click', async () => {
@@ -524,7 +659,15 @@ el.agentSync.addEventListener('click', async () => {
     const result = await ask({ type: 'TG_SYNC_AGENTS' });
     if (result?.ok) {
       await renderAgents();
-      say(result.count ? `Synced ${result.count} agents.` : 'No agents found in the open TerrierGPT tab.');
+      if (result.source === 'api') {
+        say(result.discoveredCount
+          ? `Found ${result.discoveredCount} agent${result.discoveredCount === 1 ? '' : 's'} in your TerrierGPT account.`
+          : 'Your TerrierGPT account has no agents yet.', 'ok');
+      } else {
+        say(result.discoveredCount
+          ? `Found ${result.discoveredCount} agent${result.discoveredCount === 1 ? '' : 's'} on the open page. The account list did not answer.`
+          : describe('agents-api'), result.discoveredCount ? 'ok' : 'error');
+      }
     } else {
       say(describe(result?.reason), 'error');
     }
@@ -537,6 +680,7 @@ el.agentSync.addEventListener('click', async () => {
 
 el.agentAdd.addEventListener('click', () => {
   el.agentForm.hidden = !el.agentForm.hidden;
+  el.agentAdd.setAttribute('aria-expanded', String(!el.agentForm.hidden));
   if (!el.agentForm.hidden) el.agentLink.focus();
 });
 el.agentCancel.addEventListener('click', () => {
@@ -549,11 +693,11 @@ el.agentForm.addEventListener('submit', async (event) => {
     say('That link has no agent_id.', 'error');
     return;
   }
-  await addAgent({ id, name: el.agentName.value });
-  await setSettings({ agentId: id });
-  await renderAgents(id);
-  el.agentForm.hidden = true;
-  say('Agent saved.');
+  await addAgent({ id, name: el.agentName.value, origin: INSTANCES[currentInstance].origin });
+  el.agentLink.value = '';
+  el.agentName.value = '';
+  await chooseAgent(id);
+  say('Agent saved.', 'ok');
 });
 
 el.grantBtn.addEventListener('click', async () => {
@@ -591,7 +735,7 @@ el.clipboard.addEventListener('click', async () => {
       body: text,
     }));
     await refreshCapsules();
-    say('Clipboard added.');
+    say('Clipboard added.', 'ok');
   } catch {
     say(describe('clipboard-error'), 'error');
   }
@@ -611,12 +755,15 @@ el.form.addEventListener('submit', (event) => {
 
 el.copy.addEventListener('click', async () => {
   if (!answerRaw) return;
-  await navigator.clipboard.writeText(answerRaw);
-  const previous = el.copy.textContent;
-  el.copy.textContent = 'Copied';
-  setTimeout(() => {
-    el.copy.textContent = previous;
-  }, 1600);
+  try {
+    await navigator.clipboard.writeText(answerRaw);
+  } catch {
+    say('Could not write to the clipboard.', 'error');
+    return;
+  }
+  el.copy.querySelector('use')?.setAttribute('href', '#i-check');
+  say('Answer copied.', 'ok');
+  setTimeout(() => el.copy.querySelector('use')?.setAttribute('href', '#i-copy'), 1600);
 });
 
 el.openTab.addEventListener('click', () => void ask({ type: 'TG_FOCUS_TAB' }));
@@ -627,7 +774,10 @@ el.sendMenu.addEventListener('click', () => void sendHandoff(false));
 
 el.sendRecipes.addEventListener('click', () => void sendHandoff(true));
 
-el.dismiss.addEventListener('click', () => clearAnswer());
+el.dismiss.addEventListener('click', () => {
+  clearAnswer();
+  void rememberAnswer(shownURL, null);
+});
 
 el.stop.addEventListener('click', async () => {
   stopped = true;
@@ -643,7 +793,7 @@ document.addEventListener('keydown', (event) => {
     void stopPick(true);
     return;
   }
-  showMenu(false);
+  if (!el.menu.hidden) showMenu(false);
 });
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -658,7 +808,8 @@ chrome.runtime.onMessage.addListener((message) => {
 
 function setPicking(on) {
   picking = on;
-  el.pick.textContent = on ? 'Cancel' : 'Pick';
+  el.pick.title = on ? 'Cancel picking (Esc)' : 'Pick an element on the page';
+  el.pick.setAttribute('aria-label', el.pick.title);
   el.pick.setAttribute('aria-pressed', String(on));
   el.pickHint.hidden = !on;
 }
@@ -701,7 +852,7 @@ async function addPicked(payload) {
     partial: payload?.truncated ? 'Truncated' : null,
   }));
   await refreshCapsules();
-  say(`Added ${label}.`);
+  say(`Added ${label}.`, 'ok');
 }
 
 async function sendHandoff(wake) {
@@ -729,7 +880,7 @@ async function sendHandoff(wake) {
     return;
   }
   const shortened = result.truncated ? ' The text was shortened to fit the handoff.' : '';
-  say(wake ? `Sent to the CTS Recipes inbox.${shortened}` : `Saved to TerrierGPT Menu.${shortened}`);
+  say(wake ? `Sent to the CTS Recipes inbox.${shortened}` : `Saved to TerrierGPT Menu.${shortened}`, 'ok');
 }
 
 chrome.storage.session.onChanged.addListener((changes) => {
@@ -739,9 +890,23 @@ chrome.storage.session.onChanged.addListener((changes) => {
   if (asking && changes.liveAnswer?.newValue?.text) showAnswer(changes.liveAnswer.newValue.text, { streaming: true });
 });
 
-chrome.storage.sync.onChanged.addListener((changes) => {
+chrome.storage.local.onChanged.addListener((changes) => {
   if (changes.agents) void renderAgents();
-  if (changes.instance?.newValue) applyInstance(changes.instance.newValue);
+});
+
+chrome.storage.sync.onChanged.addListener((changes) => {
+  if (changes.instance?.newValue) {
+    applyInstance(changes.instance.newValue);
+    void renderAgents();
+  }
+  if (changes.agentId && !changes.instance) void renderAgents();
+});
+
+// Clicking anywhere outside the agent sheet closes it.
+document.addEventListener('pointerdown', (event) => {
+  if (el.menu.hidden) return;
+  if (el.menu.contains(event.target) || el.agentChip.contains(event.target)) return;
+  showMenu(false);
 });
 
 chrome.tabs.onActivated.addListener(() => scheduleRefresh());
