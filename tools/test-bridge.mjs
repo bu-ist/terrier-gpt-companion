@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const MENU = join(ROOT, '../../Xcode/TerrierGPTMenu');
+const MENU = join(ROOT, '../terrier-gpt-menubar');
 const HOST = join(MENU, 'MyApp/NativeHost/terriergpt-host.py');
 const SWIFT = join(MENU, 'Groups/Automation/CompanionBridge.swift');
 
@@ -41,7 +41,7 @@ check('Chrome, Edge, Brave, Vivaldi, and Arc are registered', ['Google Chrome', 
 const worker = readFileSync(join(ROOT, 'service-worker.js'), 'utf8');
 check('asking still does not put the prompt in the URL', !worker.includes('promptURL'));
 check('a handoff is a native message, not a navigation', worker.includes("op: 'handoff'") && worker.includes('connectNative'));
-const recipesRoot = join(ROOT, '../../Xcode/CTSRecipes');
+const recipesRoot = join(ROOT, '../cts-recipes');
 const writer = readFileSync(join(recipesRoot, 'CTSRecipes/Engine/BrowserCatalog.swift'), 'utf8');
 const recipeModel = readFileSync(join(recipesRoot, 'CTSRecipes/Engine/Recipe.swift'), 'utf8');
 check('CTS Recipes writes browser-actions.json', writer.includes('browser-actions.json') && writer.includes('{{CTS_ANALYST_NAME}}'));

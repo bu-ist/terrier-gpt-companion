@@ -17,6 +17,12 @@ import { makeCapture, compose, loadCaptures, addCapture } from './lib/prompt.js'
 import { describe } from './lib/messages.js';
 import { chatURL, loadAgents, agentsFor, mergeDiscoveredAgents } from './lib/agents.js';
 
+/**
+ * Chrome has a side panel. Safari does not, so there the same panel page is
+ * docked inside the tab by `content/dock.js`, and the toolbar button toggles it.
+ */
+const HAS_SIDE_PANEL = typeof chrome.sidePanel?.open === 'function';
+
 const MENU = {
   askSelection: 'tg-ask-selection',
   captureSelection: 'tg-capture-selection',
@@ -60,9 +66,14 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.runtime.onStartup.addListener(refreshBadge);
-chrome.sidePanel
-  .setPanelBehavior({ openPanelOnActionClick: true })
-  .catch((error) => console.error('[TerrierGPT] setPanelBehavior failed:', error));
+if (HAS_SIDE_PANEL) {
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((error) => console.error('[TerrierGPT] setPanelBehavior failed:', error));
+} else {
+  // Without a side panel the toolbar button (and Alt+Shift+T) toggles the dock.
+  chrome.action.onClicked.addListener((tab) => void toggleDock(tab, 'toggle'));
+}
 
 chrome.storage.session.onChanged.addListener((changes) => {
   if (changes.captures) refreshBadge();
@@ -404,8 +415,33 @@ async function sessionState() {
 }
 
 async function openPanel(tab) {
+  if (!HAS_SIDE_PANEL) {
+    const result = await toggleDock(tab, 'open');
+    if (!result.ok) throw new Error(result.reason);
+    return;
+  }
   const windowId = tab?.windowId ?? (await chrome.windows.getCurrent()).id;
   await chrome.sidePanel.open({ windowId });
+}
+
+/** Opens, closes, or toggles the in-page panel on a tab. Safari only. */
+async function toggleDock(tab, mode) {
+  const target = tab?.id ? tab : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+  if (!target?.id || !/^https?:/i.test(target.url || '')) {
+    await toast(target?.id, describe('unsupported-page'), 'error');
+    return { ok: false, reason: 'unsupported-page' };
+  }
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: target.id }, files: ['content/dock.js'] });
+    await chrome.scripting.executeScript({
+      target: { tabId: target.id },
+      func: (how) => globalThis.__tgDock?.[how](),
+      args: [mode],
+    });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, reason: accessReason(error), detail: String(error) };
+  }
 }
 
 /** The panel picks this up, reads the page, and asks without leaving it. */
@@ -551,14 +587,15 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 // -------------------------------------------------------------------- omnibox
 
-chrome.omnibox.onInputChanged.addListener((text, suggest) => {
+// Safari has no omnibox. The keyword is a Chrome-only shortcut.
+chrome.omnibox?.onInputChanged.addListener((text, suggest) => {
   chrome.omnibox.setDefaultSuggestion({
     description: `Ask TerrierGPT: <match>${escapeXml(text)}</match>`,
   });
   suggest([]);
 });
 
-chrome.omnibox.onInputEntered.addListener(async (text) => {
+chrome.omnibox?.onInputEntered.addListener(async (text) => {
   const instruction = text.trim();
   if (!instruction) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -577,6 +614,14 @@ function escapeXml(value) {
 // user asks to send something.
 
 const NATIVE_HOST = 'com.brianmatute.terriergpt.companion';
+
+/**
+ * Safari routes native messages to the app extension inside TerrierGPT Menu
+ * (SafariWebExtensionHandler), one request and one reply, not to a host
+ * process Chrome starts. The build sets this flag for the Safari copy.
+ */
+const SAFARI_NATIVE = globalThis.TG_TARGET === 'safari';
+const SAFARI_APP_ID = 'com.brianmatute.TerrierGPTMenu';
 
 let nativePort = null;
 const pendingHost = new Map();
@@ -618,7 +663,17 @@ function onHostMessage(message) {
   pending.resolve(message);
 }
 
+async function requestSafariApp(message) {
+  try {
+    const reply = await chrome.runtime.sendNativeMessage(SAFARI_APP_ID, message);
+    return reply && typeof reply === 'object' ? reply : { ok: false, reason: 'bridge-failed' };
+  } catch {
+    return { ok: false, reason: 'bridge-missing' };
+  }
+}
+
 function requestHost(message) {
+  if (SAFARI_NATIVE) return requestSafariApp(message);
   return new Promise((resolve) => {
     const port = connectHost();
     if (!port) {
@@ -708,7 +763,6 @@ async function armPicker() {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
       files: ['content/picker.js'],
-      world: 'ISOLATED',
     });
     return { ok: true };
   } catch (error) {
@@ -722,18 +776,21 @@ async function disarmPicker() {
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: true },
-      world: 'ISOLATED',
       func: () => globalThis.__tgPicker?.disarm(),
     });
   } catch {}
   return { ok: true };
 }
 
-chrome.alarms.create('tg-host', { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'tg-host') connectHost();
-});
-connectHost();
+// Chrome only: keep the host process alive so the menu can ask for the page.
+// Safari has no long-lived host; the menu reads Safari over AppleScript.
+if (!SAFARI_NATIVE) {
+  chrome.alarms.create('tg-host', { periodInMinutes: 1 });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === 'tg-host') connectHost();
+  });
+  connectHost();
+}
 
 // -------------------------------------------------------- messages from the UI
 
