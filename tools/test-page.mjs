@@ -96,7 +96,7 @@ check('triage is the primary ticket action', primaryAction(page).id === 'triage'
 check('other pages get summarize and explain', actionsFor(article).map((action) => action.id).join() === 'summarize-page,explain-page');
 check('a ticket page does not get the generic page actions', actionsFor(page) === TICKET_ACTIONS);
 
-const recipePath = join(ROOT, '../../Xcode/CTSRecipes/Packs/cts-ai-working-group/triage-and-reply.json');
+const recipePath = join(ROOT, '../cts-recipes/Packs/cts-ai-working-group/triage-and-reply.json');
 check('the triage recipe is on disk', existsSync(recipePath));
 if (existsSync(recipePath)) {
   const recipe = JSON.parse(readFileSync(recipePath, 'utf8'));
@@ -111,7 +111,7 @@ if (existsSync(recipePath)) {
   check('the reply closes with the profile placeholder', byId.reply.includes('{{CTS_ANALYST_NAME}}'));
 }
 
-const packDir = join(ROOT, '../../Xcode/CTSRecipes/Packs/cts-ai-working-group');
+const packDir = join(ROOT, '../cts-recipes/Packs/cts-ai-working-group');
 const opted = readdirSync(packDir)
   .filter((name) => name.endsWith('.json'))
   .filter((name) => {

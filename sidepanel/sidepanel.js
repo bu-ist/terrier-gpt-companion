@@ -12,6 +12,8 @@ import { actionsFor, primaryAction, usesCatalog } from '../lib/actions.js';
 import { renderMarkdown } from '../lib/markdown.js';
 
 const SELECTION_ID = 'auto-selection';
+/** Safari docks this page inside the tab (content/dock.js) instead of a side panel. */
+const DOCKED = new URLSearchParams(location.search).has('dock');
 /** Answers kept per page, so switching tabs and coming back does not lose one. */
 const ANSWERS_KEY = 'answers';
 const ANSWERS_KEPT = 20;
@@ -663,6 +665,12 @@ async function consumePending() {
 // -------------------------------------------------------------------- events
 
 el.settings.addEventListener('click', () => showGear(el.gearMenu.hidden));
+if (DOCKED) {
+  document.body.classList.add('docked');
+  const close = document.getElementById('dock-close');
+  close.hidden = false;
+  close.addEventListener('click', () => parent.postMessage({ tg: 'dock-close' }, '*'));
+}
 el.openSettings.addEventListener('click', () => {
   showGear(false);
   chrome.runtime.openOptionsPage();

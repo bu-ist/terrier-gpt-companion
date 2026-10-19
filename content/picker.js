@@ -188,10 +188,13 @@
       chip.textContent = labelFor(snapshotOf(target));
     }
 
+    // The docked panel (Safari) is not part of the page.
+    const inDock = (node) => Boolean(node?.closest?.('#__terriergpt_dock__'));
+
     function onMove(event) {
       if (!armed) return;
       const node = event.target;
-      if (!node || node === box || node === chip) return;
+      if (!node || node === box || node === chip || inDock(node)) return;
       pending = node;
       if (frame) return;
       frame = requestAnimationFrame(() => {
@@ -226,7 +229,7 @@
     // Cancelling pointerdown also cancels the click in Chrome. Pick here, and
     // swallow a click if one still arrives so the page control does not fire.
     function onPointerDown(event) {
-      if (!armed) return;
+      if (!armed || inDock(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
       suppressClick = true;

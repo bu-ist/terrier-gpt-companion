@@ -4,7 +4,7 @@ A Chrome extension that reads the page you are on — a ServiceNow ticket, or an
 page — asks [TerrierGPT](https://terriergpt.bu.edu), and shows the answer beside that page.
 
 It is the browser half of the same idea as the
-[TerrierGPT menu bar app](../../Xcode/TerrierGPTMenu): context goes in, an answer comes out.
+[TerrierGPT menu bar app](../terrier-gpt-menubar): context goes in, an answer comes out.
 The Mac app is better at everything outside the browser (Finder, Notes, Reminders, Calendar,
 any app with selectable text). This is better at the web, and it works on Windows,
 Linux and ChromeOS, which the Mac app never will.
@@ -94,6 +94,26 @@ Reading another page happens one of two ways:
   page, so the panel asks for that one origin and says so. Granted sites are listed in
   Settings and can be revoked there.
 
+## Safari
+
+The same code ships as a Safari extension inside TerrierGPT Menu (`../terrier-gpt-menubar`, target
+**TerrierGPT Companion**). This repo is the only source for the web code of both browsers: the menu
+app's build runs `node tools/build.mjs safari` from here on every build, so a fix made here reaches
+Safari with a Run in Xcode, and Chrome with a reload. Native Safari code (the handoff bridge, signing)
+lives in the menu app's `SafariExtension/`.
+
+| | Chrome | Safari |
+|---|---|---|
+| Panel | Side panel | The same panel docked inside the tab (`content/dock.js`). The toolbar button or `Alt+Shift+T` toggles it; drag its left edge to resize |
+| Background | Module service worker | One classic script, built from the same modules |
+| To Menu / To Recipes | Python native host started by Chrome | `SafariWebExtensionHandler` in TerrierGPT Menu writes the same files |
+| Omnibox `tg` | Yes | No (Safari has no omnibox API) |
+| Menu asks for the page | Through the host | AppleScript, as before |
+
+To try it: build and run TerrierGPT Menu from Xcode, then in Safari turn on Settings → Advanced →
+*Show features for web developers*, Develop → *Allow Unsigned Extensions*, and Settings → Extensions →
+**TerrierGPT Companion**. Give it access to terriergpt.bu.edu and the sites you want it to read.
+
 ## Install for the pilot
 
 Until the unlisted store listing is live:
@@ -119,6 +139,7 @@ terriergpt-companion/
 │   └── markdown.js            # answer rendering
 ├── content/composer.js        # the only persistent content script — TerrierGPT origins only
 ├── content/picker.js          # injected when Pick is pressed, then removed from the page flow
+├── content/dock.js            # Safari only: docks the panel inside the tab
 ├── sidepanel/
 ├── options/
 ├── icons/
@@ -138,6 +159,8 @@ node tools/test-prompt.mjs     # prompt composition, incl. parity with the Swift
 node tools/test-page.mjs       # ticket formatting, frame choice, actions, markdown
 node tools/test-pick.mjs       # element names for Pick
 node tools/test-bridge.mjs     # native host handoff and page read
+node tools/test-safari.mjs     # Safari build: manifest, bundled worker, dock, native bridge
+node tools/build.mjs chrome    # → dist/chrome   (or: safari → dist/safari)
 python3 tools/generate_icons.py
 ./tools/package.sh             # → dist/terriergpt-companion-<version>.zip
 ```
