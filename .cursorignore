@@ -1,0 +1,12 @@
+# Keep Cursor's index and agent away from build output and signing material.
+
+# Build output and store packages
+dist/
+node_modules/
+*.zip
+
+# Secrets (extension signing key, local env)
+*.pem
+*.key
+.env
+.env.*
