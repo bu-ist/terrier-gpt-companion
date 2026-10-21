@@ -186,6 +186,7 @@ Transparency swaps the glass for an opaque fill.
 | A big agent list could not be saved | Sync storage caps a key at 8 KB. Moved to local storage, with migration |
 | A Test agent was offered on Prod | Agents had no instance. They now remember their origin |
 | Pick did nothing the second time on the same page | Re-injecting `picker.js` threw "Identifier has already been declared". Both content scripts are now wrapped |
+| Safari dock opened but clicks/typing did nothing | The panel iframe sat in a **closed** shadow root; Safari did not deliver input. The dock now keeps the iframe in the light DOM |
 | A follow-up in the same conversation returned the previous answer | The reader took the last assistant turn on screen. It now counts the turns before Send |
 | Answers lost their lists, headings, and tables | The answer was read with `innerText`. It is now converted from the rendered HTML to Markdown |
 | The answer vanished after a tab switch, including after Continue in TerrierGPT | Any URL change cleared it. Answers are kept per page for the session |
