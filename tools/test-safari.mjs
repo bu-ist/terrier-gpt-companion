@@ -114,6 +114,8 @@ try {
   check('the dock loads the panel page in dock mode', dock.includes("sidepanel/sidepanel.html?dock=1"));
   check('the dock only listens to its own frame', dock.includes('event.source !== frame.contentWindow'));
   check('the dock hangs off <html>, not <body>', dock.includes('document.documentElement.append(host)'));
+  check('the dock keeps the iframe in the light DOM', !dock.includes("attachShadow"));
+  check('a closed dock ignores pointer events', dock.includes('pointer-events: none'));
   const panel = readFileSync(join(OUT, 'sidepanel/sidepanel.js'), 'utf8');
   check('the panel can close the dock', panel.includes("tg: 'dock-close'"));
   const picker = readFileSync(join(OUT, 'content/picker.js'), 'utf8');
