@@ -207,6 +207,9 @@ select:focus-visible {
 .ghost:hover:not(:disabled) { color: var(--text); background: var(--inset-fill); }
 .ghost[aria-pressed="true"] { color: var(--scarlet); background: color-mix(in srgb, var(--scarlet) 14%, transparent); }
 
+/* Docked in a Safari tab: the panel sits over the page, so it carries its own edge. */
+body.docked { border-left: 0.5px solid var(--rim-low); }
+
 /* -------------------------------------------------------------------- header */
 
 .bar {
