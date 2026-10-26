@@ -187,7 +187,13 @@ async function ensureWorkerTab(instance, url) {
       // The user closed it. Open another below.
     }
   }
+  const [reading] = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = await chrome.tabs.create({ url, active: false });
+  // If the browser brought the new tab forward anyway, go back to the page being read.
+  if (reading && reading.id !== tab.id) {
+    const [now] = await chrome.tabs.query({ active: true, windowId: reading.windowId });
+    if (now?.id === tab.id) await chrome.tabs.update(reading.id, { active: true }).catch(() => {});
+  }
   await chrome.storage.session.set({ workerTabId: tab.id, workerOrigin: instance.origin });
   return { tab, fresh: true };
 }
