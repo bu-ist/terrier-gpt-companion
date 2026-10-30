@@ -16,6 +16,7 @@ import { extractFromPage, pickExtraction, presentPage } from './lib/extract.js';
 import { makeCapture, compose, loadCaptures, addCapture } from './lib/prompt.js';
 import { describe } from './lib/messages.js';
 import { chatURL, loadAgents, agentsFor, mergeDiscoveredAgents } from './lib/agents.js';
+import { postJournalInPage, choosePostResult, postRequest } from './lib/journal.js';
 
 /**
  * Chrome has a side panel. Safari does not, so there the same panel page is
@@ -715,6 +716,28 @@ async function catalogFromHost() {
   return { ok: false, reason: reply?.reason || 'no-catalog' };
 }
 
+async function postJournal(payload) {
+  const prepared = postRequest(payload || {});
+  if (!prepared.ok) return prepared;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) {
+    return { ok: false, reason: 'unsupported-page' };
+  }
+  let injected;
+  try {
+    // MAIN world: g_form and g_ck live on the page, not in the extension's isolated world.
+    injected = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      world: 'MAIN',
+      func: postJournalInPage,
+      args: [{ field: prepared.field, text: prepared.text, expectNumber: prepared.expectNumber }],
+    });
+  } catch (error) {
+    return { ok: false, reason: accessReason(error), detail: String(error) };
+  }
+  return choosePostResult(injected);
+}
+
 async function handoffToMenu(payload) {
   const text = String(payload.text || '').trim();
   if (!text) return { ok: false, reason: 'empty-prompt' };
@@ -888,6 +911,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         case 'TG_HANDOFF':
           sendResponse(await handoffToMenu(message.payload ?? {}));
+          break;
+        case 'TG_POST_JOURNAL':
+          sendResponse(await postJournal(message.payload ?? {}));
           break;
         case 'TG_CATALOG':
           sendResponse(await catalogFromHost());

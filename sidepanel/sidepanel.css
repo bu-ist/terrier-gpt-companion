@@ -701,10 +701,12 @@ main {
 .answer-foot {
   flex: none;
   display: flex;
+  align-items: center;
   gap: 10px;
   padding-top: 8px;
   border-top: 0.5px solid var(--rim-low);
 }
+#post-journal { margin-right: auto; white-space: nowrap; }
 
 /* -------------------------------------------------------------------- footer */
 
