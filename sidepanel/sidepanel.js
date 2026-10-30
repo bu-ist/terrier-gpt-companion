@@ -9,6 +9,7 @@ import { SOURCE, makeCapture, loadCaptures, saveCaptures, addCapture } from '../
 import { describe } from '../lib/messages.js';
 import { parseAgentId, loadAgents, addAgent, agentsFor, searchAgents } from '../lib/agents.js';
 import { actionsFor, primaryAction, usesCatalog } from '../lib/actions.js';
+import { journalForAction, postRequest } from '../lib/journal.js';
 import { renderMarkdown } from '../lib/markdown.js';
 
 const SELECTION_ID = 'auto-selection';
@@ -67,6 +68,7 @@ const el = {
   placeholder: document.getElementById('placeholder'),
   placeholderText: document.getElementById('placeholder-text'),
   answerFoot: document.getElementById('answer-foot'),
+  post: document.getElementById('post-journal'),
   copy: document.getElementById('copy-response'),
   openTab: document.getElementById('open-tab-response'),
   sendMenu: document.getElementById('send-menu'),
@@ -84,6 +86,12 @@ let catalogState = 'fallback';
 let currentOrigin = null;
 let shownURL = '';
 let answerRaw = '';
+let answerActionId = '';
+let answerTicket = '';
+let answerPosted = false;
+let postArmed = false;
+let postArmedAt = 0;
+let posting = false;
 let asking = false;
 let picking = false;
 let handing = false;
@@ -187,7 +195,7 @@ function renderActions() {
     button.disabled = asking || !ready;
     button.addEventListener('click', () => {
       showMenu(false);
-      void runAsk(action.prompt, { followUp: false, label: action.label });
+      void runAsk(action.prompt, { followUp: false, label: action.label, actionId: action.id });
     });
     el.actions.append(button);
   }
@@ -328,6 +336,7 @@ function showAnswer(raw, { streaming = false } = {}) {
       : 'Pick an action above. The answer stays beside this page.';
     el.answerFoot.hidden = true;
     el.dismiss.hidden = true;
+    el.post.hidden = true;
     return;
   }
   el.placeholder.hidden = true;
@@ -335,10 +344,31 @@ function showAnswer(raw, { streaming = false } = {}) {
   if (streaming) el.responseBody.scrollTop = el.responseBody.scrollHeight;
   el.answerFoot.hidden = streaming;
   el.dismiss.hidden = streaming;
+  syncPostButton();
+}
+
+function syncPostButton() {
+  const spec = journalForAction(answerActionId);
+  if (!spec || !answerRaw.trim() || asking) {
+    el.post.hidden = true;
+    return;
+  }
+  el.post.hidden = false;
+  el.post.disabled = posting || answerPosted;
+  el.post.textContent = answerPosted
+    ? (spec.clientVisible ? 'Reply posted' : 'Work note posted')
+    : (postArmed ? spec.confirm : spec.verb);
+  el.post.title = spec.clientVisible
+    ? 'Posts this reply where the client can read it. ServiceNow emails them, then the form reloads.'
+    : 'Posts this as an internal work note, then reloads the form. Unsaved edits on the form are lost.';
 }
 
 function clearAnswer() {
   answerRaw = '';
+  answerActionId = '';
+  answerTicket = '';
+  answerPosted = false;
+  postArmed = false;
   showAnswer('');
   el.answerLabel.textContent = 'Answer';
   el.responseAgent.hidden = true;
@@ -367,6 +397,10 @@ async function restoreAnswer(url) {
     clearAnswer();
     return;
   }
+  answerActionId = saved.actionId || '';
+  answerTicket = saved.ticketNumber || '';
+  answerPosted = saved.posted === true;
+  postArmed = false;
   showAnswer(saved.text);
   el.answerLabel.textContent = saved.label || 'Answer';
   el.responseAgent.hidden = !saved.agent;
@@ -574,7 +608,7 @@ async function buildCaptures(followUp) {
   return list;
 }
 
-async function runAsk(instruction, { followUp = false, label = 'Answer' } = {}) {
+async function runAsk(instruction, { followUp = false, label = 'Answer', actionId = '' } = {}) {
   const text = String(instruction || '').trim();
   const captures = await buildCaptures(followUp);
   if (!text && !captures.length) {
@@ -582,9 +616,15 @@ async function runAsk(instruction, { followUp = false, label = 'Answer' } = {}) 
     return false;
   }
 
+  const keepAction = followUp ? (actionId || answerActionId) : actionId;
+  const keepTicket = followUp ? (answerTicket || currentPage?.ticket?.number || '') : (currentPage?.ticket?.number || '');
   if (picking) await stopPick(false);
   asking = true;
   stopped = false;
+  answerActionId = '';
+  answerTicket = '';
+  answerPosted = false;
+  postArmed = false;
   renderActions();
   el.answerLabel.textContent = label || 'Answer';
   const agentLabel = selectedAgent?.name ?? '';
@@ -614,8 +654,18 @@ async function runAsk(instruction, { followUp = false, label = 'Answer' } = {}) 
     }
     showAnswer(result.text || answerRaw || '');
     if (result.text) {
+      answerActionId = keepAction || '';
+      answerTicket = keepTicket;
+      answerPosted = false;
       say('Answer received.', 'ok');
-      await rememberAnswer(askedURL, { text: result.text, label: label || 'Answer', agent: agentLabel });
+      await rememberAnswer(askedURL, {
+        text: result.text,
+        label: label || 'Answer',
+        agent: agentLabel,
+        actionId: answerActionId,
+        ticketNumber: answerTicket,
+      });
+      syncPostButton();
     } else {
       say('TerrierGPT returned no text.', 'error');
     }
@@ -802,12 +852,84 @@ el.form.addEventListener('submit', (event) => {
     say('Write a question, or use one of the actions above.', 'error');
     return;
   }
-  void runAsk(instruction, { followUp: Boolean(answerRaw), label: 'Ask' }).then((ok) => {
+  void runAsk(instruction, { followUp: Boolean(answerRaw), label: 'Ask', actionId: answerActionId }).then((ok) => {
     if (ok) el.instruction.value = '';
   });
 });
 
+el.post.addEventListener('click', () => void postCurrentAnswer());
+
+async function postCurrentAnswer() {
+  const spec = journalForAction(answerActionId);
+  if (!spec || posting || answerPosted) return;
+  const liveNumber = currentPage?.ticket?.number || '';
+  const expectNumber = answerTicket || liveNumber;
+  if (answerTicket && liveNumber && answerTicket !== liveNumber) {
+    postArmed = false;
+    syncPostButton();
+    say(`This draft is for ${answerTicket}. This tab is ${liveNumber}.`, 'error');
+    return;
+  }
+  const prepared = postRequest({ field: spec.field, text: answerRaw, expectNumber });
+  if (!prepared.ok) {
+    say(describe(prepared.reason), 'error');
+    return;
+  }
+  if (spec.clientVisible && !postArmed) {
+    postArmed = true;
+    postArmedAt = Date.now();
+    syncPostButton();
+    const who = currentPage?.ticket?.caller || 'the client';
+    say(`This emails ${who} on ${prepared.expectNumber}. The form reloads, so unsaved edits there are lost. Click Email the client to send it.`, 'error');
+    return;
+  }
+  if (spec.clientVisible && Date.now() - postArmedAt < 600) return;
+  postArmed = false;
+  posting = true;
+  syncPostButton();
+  say(spec.clientVisible
+    ? `Emailing ${currentPage?.ticket?.caller || 'the client'} on ${prepared.expectNumber}…`
+    : `Posting the work note on ${prepared.expectNumber}…`);
+  let result;
+  try {
+    result = await ask({
+      type: 'TG_POST_JOURNAL',
+      payload: { field: prepared.field, text: prepared.text, expectNumber: prepared.expectNumber },
+    });
+  } catch (error) {
+    posting = false;
+    syncPostButton();
+    say(String(error), 'error');
+    return;
+  }
+  posting = false;
+  if (!result?.ok) {
+    syncPostButton();
+    if (result?.reason === 'wrong-ticket') {
+      say(`This draft is for ${prepared.expectNumber}. The form is ${result.number || 'a different ticket'}.`, 'error');
+      return;
+    }
+    say(describe(result?.reason), 'error');
+    return;
+  }
+  answerPosted = true;
+  syncPostButton();
+  const where = spec.clientVisible ? 'Reply posted. ServiceNow emails the client.' : 'Work note posted.';
+  const check = result.confirmed === false ? ' Check the activity stream after the reload.' : '';
+  say(`${where} ${result.number || prepared.expectNumber} is reloading.${check}`, 'ok');
+  await rememberAnswer(shownURL || currentPage?.url || '', {
+    text: answerRaw,
+    label: el.answerLabel.textContent,
+    agent: el.responseAgent.hidden ? '' : el.responseAgent.textContent,
+    actionId: answerActionId,
+    ticketNumber: answerTicket || result.number || prepared.expectNumber,
+    posted: true,
+  });
+}
+
 el.copy.addEventListener('click', async () => {
+  postArmed = false;
+  syncPostButton();
   if (!answerRaw) return;
   try {
     await navigator.clipboard.writeText(answerRaw);
@@ -845,6 +967,12 @@ document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
   if (picking) {
     void stopPick(true);
+    return;
+  }
+  if (postArmed) {
+    postArmed = false;
+    syncPostButton();
+    say('Left the reply in the panel.');
     return;
   }
   if (!el.menu.hidden) showMenu(false);

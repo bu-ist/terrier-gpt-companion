@@ -1,6 +1,6 @@
 # Privacy Policy — TerrierGPT Companion
 
-_Last updated: 5 October 2026 (0.4)_
+_Last updated: 26 October 2026_
 
 ## Summary
 
@@ -45,7 +45,14 @@ prompt into the message box on `terriergpt.bu.edu` or `test.terriergpt-nonprod.b
 The answer is read back from that tab into the side panel.
 
 Into a handoff file on this Mac when you press To Menu or To Recipes, and back to the
-TerrierGPT Menu app when that app asks for the front tab. Nowhere else.
+TerrierGPT Menu app when that app asks for the front tab.
+
+Onto the ServiceNow ticket open in the tab, only when you press Post reply or Post work
+note under that answer. Reply posts as a client comment, which ServiceNow emails to the
+client, and the button asks a second time before it does. Work note posts as an internal
+note. The extension uses the ServiceNow session already signed in on that tab. It does not
+read or store the ServiceNow password, and it does not send the note to a server of this
+extension.
 
 Once the text is in TerrierGPT, Boston University's own terms and privacy statement govern it:
 

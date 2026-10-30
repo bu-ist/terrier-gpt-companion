@@ -21,6 +21,7 @@ const load = (rel) => import(pathToFileURL(join(ROOT, rel)).href);
 const { makeCapture, compose, totalChars, SOURCE } = await load('lib/prompt.js');
 const { parseAgentId, chatURL, promptURL, mergeDiscoveredAgents } = await load('lib/agents.js');
 const { describe } = await load('lib/messages.js');
+const { journalForAction, plainNote, postRequest, choosePostResult } = await load('lib/journal.js');
 const { INSTANCES, DEFAULTS } = await load('lib/config.js');
 
 let failures = 0;
@@ -119,11 +120,44 @@ const failureCodes = [
   'bridge-missing',
   'bridge-failed',
   'agents-api',
+  'empty-note',
+  'no-ticket',
+  'no-form',
+  'not-saved',
+  'wrong-ticket',
+  'no-session',
+  'post-failed',
 ];
 
 for (const code of failureCodes) {
   check(`failure message defined for '${code}'`, describe(code) !== 'Something went wrong.' && describe(code).length > 0);
 }
+
+// 6. Posting a drafted reply or work note onto the open ticket
+const replyPost = journalForAction('reply');
+const notePost = journalForAction('work-note');
+check('reply posts as a client comment', replyPost?.field === 'comments' && replyPost.clientVisible === true);
+check('work note posts internally', notePost?.field === 'work_notes' && notePost.clientVisible === false);
+check('triage is not a journal post', journalForAction('triage') === null);
+check('summarize is not a journal post', journalForAction('summarize') === null);
+
+check('plain note trims', plainNote('  hello  ') === 'hello');
+check('plain note unwraps one fence', plainNote('```text\nhello\n```') === 'hello');
+check('plain note keeps a reply that mentions a fence', plainNote('See ```code``` below').includes('```'));
+
+const ready = postRequest({ field: 'comments', text: 'Thanks, this is fixed.', expectNumber: 'INC001' });
+check('post request keeps the note and the ticket', ready.ok && ready.text === 'Thanks, this is fixed.' && ready.expectNumber === 'INC001');
+check('post request refuses an empty note', postRequest({ field: 'comments', text: '  ', expectNumber: 'INC001' }).reason === 'empty-note');
+check('post request refuses a missing ticket', postRequest({ field: 'work_notes', text: 'Checked the queue.', expectNumber: '' }).reason === 'no-ticket');
+check('post request refuses any other field', postRequest({ field: 'state', text: 'no', expectNumber: 'INC001' }).reason === 'unknown-message');
+
+const chosen = choosePostResult([
+  { result: { ok: false, reason: 'no-form' } },
+  { result: { ok: true, number: 'INC001', field: 'comments', confirmed: true } },
+]);
+check('post result ignores frames that are not the form', chosen.ok && chosen.number === 'INC001');
+check('post result reports no form when every frame misses', choosePostResult([{ result: { ok: false, reason: 'no-form' } }]).reason === 'no-form');
+check('post result surfaces a wrong ticket', choosePostResult([{ reason: 'wrong-ticket', number: 'INC002' }]).reason === 'wrong-ticket');
 
 console.log(failures ? `\n${failures} failing.` : '\nAll integration flow tests passed.');
 process.exit(failures ? 1 : 0);

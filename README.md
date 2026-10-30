@@ -1,5 +1,8 @@
 # TerrierGPT Companion
 
+Developed by bmatute@bu.edu for BU-IST-CTS.
+Author: Brian Matute Diaz.
+
 A Chrome extension that reads the page you are on — a ServiceNow ticket, or any other
 page — asks [TerrierGPT](https://terriergpt.bu.edu), and shows the answer beside that page.
 
@@ -38,6 +41,7 @@ The panel stays on the page you are reading. TerrierGPT answers in a background 
 - **Page card** — title and host, or, on a classic ServiceNow form, the number, state, caller, and short description. The form is read from the `gsft_main` frame, not the navigator around it.
 - **Actions** — on a ticket: Triage, Reply, Work note, and Summarize, from the CTS Recipes Tickets shelf (`triage-and-reply`, opted in with `surfaces: ["chrome"]`). Open CTS Recipes once so it can write that list. Until the list is there, the panel uses the same prompts baked in as a fallback and says so. On any other page: Summarize and Explain.
 - **Answer** — rendered in the panel with its formatting (headings, lists, tables, code). Copy it, or continue the same conversation in the TerrierGPT tab. Asking does not switch away from the ticket, and it does not throw away the page text. Each page keeps its last answer for the session, so switching tabs and coming back brings it back.
+- **Post on the ticket** — a Reply or Work note answer shows a button that writes that draft onto the open ServiceNow record. Reply is a client comment: the button asks a second time, because ServiceNow emails the client, then the form reloads. Work note stays internal and posts on one click, then the form reloads. Triage and Summarize stay in the panel. The write uses the signed-in ServiceNow session. It does not click Update.
 - **Context** — a selection on the page, a picked element, the clipboard, or a link, shown as capsules and included with the page. Pick highlights a block; one click adds it. The ticket fields still cover the usual ServiceNow form.
 - **To Menu / To Recipes** — under an answer. To Menu writes a handoff file for the menu-bar app. To Recipes also drops that file in the CTS Recipes inbox and opens it. Both stay on this Mac. The menu app has to have been opened once so it can register the bridge.
 - **Agents** — the person button in the header. Search by name or description, sync the whole account list, or paste an agent's Copy link.
