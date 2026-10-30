@@ -125,6 +125,9 @@
     });
   }
 
+  // Polls with setTimeout, not requestAnimationFrame. Asking runs in a tab the
+  // user is not looking at, and browsers pause animation frames in hidden tabs.
+  // Safari paused them outright, so Send waited until the user opened the tab.
   function waitUntil(test, timeout = 6000) {
     return new Promise((resolve) => {
       const deadline = Date.now() + timeout;
@@ -137,7 +140,7 @@
         }
         if (ok) return resolve(true);
         if (Date.now() > deadline) return resolve(false);
-        requestAnimationFrame(tick);
+        setTimeout(tick, 100);
       };
       tick();
     });
