@@ -2,7 +2,8 @@
 
 TerrierGPT Companion: a Manifest V3 Chrome extension that reads the current page (ServiceNow
 tickets in particular), asks TerrierGPT (LibreChat), and shows the answer in a side panel.
-The same source also builds the Safari extension carried by `../terrier-gpt-menubar`.
+The same source also builds the Safari extension carried by `../terrier-gpt-menubar`, and the
+iOS Safari extension carried by `../terrier-gpt-ios` (`safari-ios` target, `popup/`).
 
 ## Layout
 
@@ -12,6 +13,7 @@ The same source also builds the Safari extension carried by `../terrier-gpt-menu
 | `service-worker.js` | Background worker |
 | `content/` | Content scripts, including the Safari in-tab dock (`dock.js`) |
 | `sidepanel/`, `options/` | Extension UI |
+| `popup/` | iOS Safari popup: Send to TerrierGPT for iPhone |
 | `lib/` | Shared modules |
 | `tools/` | Build, validation, tests, packaging (plain Node, no `package.json`) |
 | `store/` | Chrome Web Store listing and privacy policy |
@@ -29,9 +31,10 @@ node tools/test-bridge.mjs
 node tools/test-agents.mjs
 node tools/test-flows.mjs
 node tools/test-safari.mjs   # Safari build target
+node tools/test-safari-ios.mjs # iOS Safari build target
 ```
 
-Build: `node tools/build.mjs chrome` or `node tools/build.mjs safari` (output in `dist/`, gitignored).
+Build: `node tools/build.mjs chrome`, `safari`, or `safari-ios` (output in `dist/`, gitignored).
 Store ZIP: `./tools/package.sh`.
 
 ## Rules

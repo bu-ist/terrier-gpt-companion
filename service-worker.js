@@ -35,7 +35,8 @@ const MENU = {
 // ------------------------------------------------------------------ lifecycle
 
 chrome.runtime.onInstalled.addListener(async () => {
-  chrome.contextMenus.removeAll(() => {
+  // Safari on iOS has no context menus; there the popup is the only way in.
+  chrome.contextMenus?.removeAll(() => {
     chrome.contextMenus.create({
       id: MENU.askSelection,
       title: 'Ask TerrierGPT about "%s"',
@@ -522,7 +523,7 @@ async function toast(tabId, message, tone = 'info') {
 
 // --------------------------------------------------------------- context menus
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === MENU.openPanel || info.menuItemId === MENU.capturePage) {
     await chrome.storage.session.set({ reread: Date.now() });
     try {
@@ -574,7 +575,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 
 // ------------------------------------------------------------------- commands
 
-chrome.commands.onCommand.addListener(async (command) => {
+// Keyboard commands do not exist on iOS.
+chrome.commands?.onCommand.addListener(async (command) => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
   if (command === 'capture-page') {
@@ -627,8 +629,10 @@ const NATIVE_HOST = 'com.brianmatute.terriergpt.companion';
  * (SafariWebExtensionHandler), one request and one reply, not to a host
  * process Chrome starts. The build sets this flag for the Safari copy.
  */
-const SAFARI_NATIVE = globalThis.TG_TARGET === 'safari';
-const SAFARI_APP_ID = 'com.brianmatute.TerrierGPTMenu';
+const SAFARI_IOS = globalThis.TG_TARGET === 'safari-ios';
+const SAFARI_NATIVE = globalThis.TG_TARGET === 'safari' || SAFARI_IOS;
+// iOS ignores the identifier and always answers from the containing app's extension.
+const SAFARI_APP_ID = SAFARI_IOS ? 'edu.bu.TerrierGPT' : 'com.brianmatute.TerrierGPTMenu';
 
 let nativePort = null;
 const pendingHost = new Map();
@@ -736,6 +740,35 @@ async function postJournal(payload) {
     return { ok: false, reason: accessReason(error), detail: String(error) };
   }
   return choosePostResult(injected);
+}
+
+/**
+ * iOS: hands the page, selection, or ticket to TerrierGPT for iPhone through its app
+ * extension, which drops it in the app's context tray. When TerrierGPT is open on the
+ * other half of the screen it arrives on its own; otherwise the popup offers to open it.
+ */
+async function sendToApp(payload = {}) {
+  if (!SAFARI_IOS) return { ok: false, reason: 'unknown-message' };
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const read = await extractTab(tab);
+  if (!read.ok) return read;
+
+  const page = read.page;
+  const wantsSelection = payload.mode === 'selection' || (payload.mode === 'auto' && page.selection);
+  const body = wantsSelection ? page.selection : page.body;
+  if (!body) return { ok: false, reason: wantsSelection ? 'empty-selection' : 'empty-page' };
+
+  const ticket = !wantsSelection && page.kind === 'ticket' ? page.ticket : null;
+  const reply = await requestHost({
+    op: 'capture',
+    id: crypto.randomUUID(),
+    kind: wantsSelection ? 'selection' : ticket ? 'ticket' : 'page',
+    title: wantsSelection ? 'Selection' : ticket?.shortDescription || page.title || page.host || 'Page',
+    url: page.url || '',
+    body: body.slice(0, read.maxPageChars),
+    ticketNumber: ticket?.number || '',
+  });
+  return reply?.ok ? { ok: true, kind: wantsSelection ? 'selection' : ticket ? 'ticket' : 'page' } : reply;
 }
 
 async function handoffToMenu(payload) {
@@ -911,6 +944,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         case 'TG_HANDOFF':
           sendResponse(await handoffToMenu(message.payload ?? {}));
+          break;
+        case 'TG_SEND_TO_APP':
+          sendResponse(await sendToApp(message.payload ?? {}));
+          break;
+        case 'TG_OPEN_DOCK':
+          sendResponse(await toggleDock(null, 'open'));
           break;
         case 'TG_POST_JOURNAL':
           sendResponse(await postJournal(message.payload ?? {}));
