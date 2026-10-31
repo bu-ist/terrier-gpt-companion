@@ -118,6 +118,17 @@ To try it: build and run TerrierGPT Menu from Xcode, then in Safari turn on Sett
 *Show features for web developers*, Develop → *Allow Unsigned Extensions*, and Settings → Extensions →
 **TerrierGPT Companion**. Give it access to terriergpt.bu.edu and the sites you want it to read.
 
+### Safari on iPhone
+
+TerrierGPT for iPhone (`../terrier-gpt-ios`, target **TerrierGPT Safari**) carries a third build,
+`node tools/build.mjs safari-ios`. It starts from the Safari build, drops context menus and
+keyboard commands (iOS has neither), and makes the toolbar button open `popup/`. The popup reads
+the page or ServiceNow ticket and **Send to TerrierGPT** hands it to the app's extension
+(`{op: 'capture'}`), which drops it in the app's context tray. With TerrierGPT open on the other
+half of the screen it appears there; otherwise the popup offers **Open TerrierGPT**. It never
+opens the app on its own, because in split view that would push Safari off the screen. The
+in-page panel stays available from the popup.
+
 ## Install for the pilot
 
 Until the unlisted store listing is live:
@@ -144,6 +155,7 @@ terriergpt-companion/
 ├── content/composer.js        # the only persistent content script — TerrierGPT origins only
 ├── content/picker.js          # injected when Pick is pressed, then removed from the page flow
 ├── content/dock.js            # Safari only: docks the panel inside the tab
+├── popup/                     # Safari on iOS only: Send to TerrierGPT for iPhone
 ├── sidepanel/
 ├── options/
 ├── icons/
@@ -164,7 +176,8 @@ node tools/test-page.mjs       # ticket formatting, frame choice, actions, markd
 node tools/test-pick.mjs       # element names for Pick
 node tools/test-bridge.mjs     # native host handoff and page read
 node tools/test-safari.mjs     # Safari build: manifest, bundled worker, dock, native bridge
-node tools/build.mjs chrome    # → dist/chrome   (or: safari → dist/safari)
+node tools/test-safari-ios.mjs # Safari on iOS: manifest, popup, Send to TerrierGPT for iPhone
+node tools/build.mjs chrome    # → dist/chrome   (or: safari → dist/safari, safari-ios → dist/safari-ios)
 python3 tools/generate_icons.py
 ./tools/package.sh             # → dist/terriergpt-companion-<version>.zip
 ```

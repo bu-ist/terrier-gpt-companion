@@ -91,7 +91,8 @@ for (const path of files.filter((f) => extname(f) === '.html')) {
     fail(`${rel}: inline event handler attribute — blocked by the extension CSP`);
   }
   for (const [, src] of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
-    if (/^(https?:|data:|#)/.test(src)) continue;
+    // Any scheme (https:, data:, terriergpt:) is a link, not a file in the package.
+    if (/^([a-z][a-z0-9+.-]*:|#)/i.test(src)) continue;
     const resolved = join(dirname(path), src);
     if (!existsSync(resolved)) fail(`${rel}: references a missing file: ${src}`);
   }
