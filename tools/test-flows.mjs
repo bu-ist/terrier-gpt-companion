@@ -10,6 +10,7 @@
  */
 
 import { webcrypto } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -21,7 +22,7 @@ const load = (rel) => import(pathToFileURL(join(ROOT, rel)).href);
 const { makeCapture, compose, totalChars, SOURCE } = await load('lib/prompt.js');
 const { parseAgentId, chatURL, promptURL, mergeDiscoveredAgents } = await load('lib/agents.js');
 const { describe } = await load('lib/messages.js');
-const { journalForAction, plainNote, postRequest, choosePostResult } = await load('lib/journal.js');
+const { journalForAction, plainNote, postRequest, choosePostResult, splitNote, toPlainText, postingInstruction, NOTE_OPEN, NOTE_CLOSE } = await load('lib/journal.js');
 const { INSTANCES, DEFAULTS } = await load('lib/config.js');
 
 let failures = 0;
@@ -143,7 +144,54 @@ check('summarize is not a journal post', journalForAction('summarize') === null)
 
 check('plain note trims', plainNote('  hello  ') === 'hello');
 check('plain note unwraps one fence', plainNote('```text\nhello\n```') === 'hello');
-check('plain note keeps a reply that mentions a fence', plainNote('See ```code``` below').includes('```'));
+check('a fence inside a note is not taken as a wrapper', plainNote('See ```code``` below') === 'See code below');
+
+// Only the note is posted. What TerrierGPT says to the analyst stays in the panel.
+const chatty = [
+  'This ticket stays in CTS -- no escalation needed. Here is the draft work note:',
+  '',
+  '---',
+  '',
+  '**--- Work Note (Internal, CTS only) ---**',
+  '',
+  '**Device:** LAB-PC-0001 | **User:** Pat Example',
+  '',
+  '**Next step:** Schedule the in-place upgrade with Pat Example.',
+  '',
+  '---',
+  '',
+  'Ready to paste into the work notes field. Let me know if you want any changes before you post it.',
+].join('\n');
+const split = splitNote(chatty);
+check('an unmarked draft drops the lead-in', !split.note.includes('Here is the draft') && !split.note.includes('stays in CTS'));
+check('an unmarked draft drops the offer to change it', !split.note.includes('Ready to paste') && !split.note.includes('Let me know'));
+check('an unmarked draft drops its title line and separators', !split.note.includes('Work Note (Internal') && !split.note.includes('---'));
+check('an unmarked draft posts plain text, not Markdown', !split.note.includes('**') && split.note.startsWith('Device: LAB-PC-0001'));
+check('the lead-in and sign-off stay for the analyst', split.aside.includes('stays in CTS') && split.aside.includes('Ready to paste'));
+check('the panel is told it had to guess', split.source === 'cleaned');
+check('plainNote is the posted note', plainNote(chatty) === split.note);
+
+const marked = splitNote(`Sure.\n${NOTE_OPEN}\nHi Pat,\n\nThe **printer** is back online.\n\nThanks,\nAlex\n${NOTE_CLOSE}\nI kept it short. Want it more formal?`);
+check('marked notes post only what is between the markers', marked.note === 'Hi Pat,\n\nThe printer is back online.\n\nThanks,\nAlex' && marked.source === 'markers');
+check('text outside the markers is an aside', marked.aside.includes('Sure.') && marked.aside.includes('more formal'));
+
+const clientClose = splitNote('Hi Pat,\n\nThe upgrade is set for Tuesday. Let me know if you have any questions.\n\nThanks,\nAlex');
+check('a reply keeps its own closing line', clientClose.note.includes('Let me know if you have any questions.') && clientClose.source === 'whole');
+const lastLine = splitNote('Hi Pat,\n\nWe will swap the PC on Tuesday. Let me know if that time does not work.');
+check('a closing question to the client is not an aside', lastLine.note.endsWith('does not work.'));
+
+check('plain text keeps list dashes and drops emphasis', toPlainText('* **one**\n* _two_\n# Head') === '- one\n- two\nHead');
+check('plain text keeps a link target', toPlainText('[KB0012345](https://example.edu/kb)') === 'KB0012345 (https://example.edu/kb)');
+check('plain text flattens a table', toPlainText('| a | b |\n|---|---|\n| 1 | 2 |') === 'a - b\n1 - 2');
+
+const asks = postingInstruction(journalForAction('work-note'));
+check('a postable question asks for markers', asks.includes(NOTE_OPEN) && asks.includes(NOTE_CLOSE));
+check('a postable question forbids Markdown and meta text inside the note', /no Markdown/.test(asks) && /Here is the draft/.test(asks));
+check('a reply question says the client reads it', postingInstruction(journalForAction('reply')).includes('client reads it'));
+check('triage gets no posting format', postingInstruction(journalForAction('triage')) === '');
+
+const panelSource = readFileSync(join(ROOT, 'sidepanel/sidepanel.js'), 'utf8');
+check('the panel posts the note draft, not the whole answer', panelSource.includes('postRequest({ field: spec.field, text: noteDraft') && !panelSource.includes('text: answerRaw, expectNumber'));
 
 const ready = postRequest({ field: 'comments', text: 'Thanks, this is fixed.', expectNumber: 'INC001' });
 check('post request keeps the note and the ticket', ready.ok && ready.text === 'Thanks, this is fixed.' && ready.expectNumber === 'INC001');

@@ -698,6 +698,51 @@ main {
 .answer-body th, .answer-body td { text-align: left; padding: 5px 8px; border-bottom: 0.5px solid var(--rim-low); vertical-align: top; }
 .answer-body th { font-weight: 650; color: var(--muted); }
 
+/* A Reply or Work note: what gets posted, apart from what TerrierGPT says to you. */
+.note-card {
+  border-radius: var(--radius-control);
+  background: var(--inset-fill);
+  box-shadow: inset 0 0 0 0.5px var(--rim-low);
+  padding: 10px 12px 12px;
+  margin-bottom: 10px;
+}
+.note-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.note-hint { margin-left: auto; font-size: 11px; color: var(--muted); }
+.note-text {
+  white-space: pre-wrap;
+  outline: none;
+  border-radius: 8px;
+  margin: 0 -6px;
+  padding: 4px 6px;
+  cursor: text;
+  transition: box-shadow var(--snap), background var(--snap);
+}
+.note-text[contenteditable="false"] { cursor: default; color: var(--muted); }
+.note-text:hover:not([contenteditable="false"]) { background: color-mix(in srgb, var(--glass-strong) 60%, transparent); }
+.note-text:focus { background: var(--glass-strong); box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--scarlet) 45%, transparent); }
+.note-check {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--ember) 75%, var(--text));
+}
+.note-aside {
+  color: var(--muted);
+  font-size: 12px;
+  border-left: 2px solid var(--rim-low);
+  padding-left: 10px;
+}
+.note-aside summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  list-style: none;
+  user-select: none;
+}
+.note-aside summary::before { content: "›"; display: inline-block; margin-right: 6px; transition: transform var(--snap); }
+.note-aside[open] summary::before { transform: rotate(90deg); }
+.note-aside-body { margin-top: 6px; }
+.note-aside-body p:last-child { margin-bottom: 0; }
+
 .answer-foot {
   flex: none;
   display: flex;
