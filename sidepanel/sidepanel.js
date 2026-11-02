@@ -9,7 +9,7 @@ import { SOURCE, makeCapture, loadCaptures, saveCaptures, addCapture } from '../
 import { describe } from '../lib/messages.js';
 import { parseAgentId, loadAgents, addAgent, agentsFor, searchAgents } from '../lib/agents.js';
 import { actionsFor, primaryAction, usesCatalog } from '../lib/actions.js';
-import { journalForAction, postRequest } from '../lib/journal.js';
+import { journalForAction, postRequest, postingInstruction, splitNote, NOTE_OPEN, NOTE_CLOSE } from '../lib/journal.js';
 import { renderMarkdown } from '../lib/markdown.js';
 
 const SELECTION_ID = 'auto-selection';
@@ -86,6 +86,9 @@ let catalogState = 'fallback';
 let currentOrigin = null;
 let shownURL = '';
 let answerRaw = '';
+/** The note as it will be posted: split from the answer, then whatever the analyst edited. */
+let noteDraft = '';
+let noteSource = '';
 let answerActionId = '';
 let answerTicket = '';
 let answerPosted = false;
@@ -324,10 +327,12 @@ async function forceSelection(text, url) {
   ]);
 }
 
-function showAnswer(raw, { streaming = false } = {}) {
+function showAnswer(raw, { streaming = false, note = null } = {}) {
   answerRaw = raw || '';
   el.responseBody.classList.toggle('streaming', streaming && Boolean(answerRaw));
   if (!answerRaw) {
+    noteDraft = '';
+    noteSource = '';
     el.responseBody.replaceChildren(el.placeholder);
     el.placeholder.hidden = false;
     el.placeholder.classList.toggle('busy', asking);
@@ -340,11 +345,86 @@ function showAnswer(raw, { streaming = false } = {}) {
     return;
   }
   el.placeholder.hidden = true;
-  el.responseBody.innerHTML = renderMarkdown(answerRaw);
+  const spec = journalForAction(answerActionId);
+  if (spec && !streaming) {
+    renderNote(spec, note);
+  } else {
+    // While it streams, the markers are noise. They are only a hand-off format.
+    el.responseBody.innerHTML = renderMarkdown(answerRaw.split(NOTE_OPEN).join('').split(NOTE_CLOSE).join(''));
+    noteDraft = '';
+    noteSource = '';
+  }
   if (streaming) el.responseBody.scrollTop = el.responseBody.scrollHeight;
   el.answerFoot.hidden = streaming;
   el.dismiss.hidden = streaming;
   syncPostButton();
+}
+
+/**
+ * A Reply or Work note shows two things: the note that will be posted, as
+ * plain editable text, and anything TerrierGPT said to the analyst, which is
+ * never posted.
+ */
+function renderNote(spec, saved) {
+  const split = splitNote(answerRaw);
+  noteDraft = typeof saved === 'string' ? saved : split.note;
+  noteSource = split.source;
+
+  const card = document.createElement('section');
+  card.className = 'note-card';
+  const head = document.createElement('div');
+  head.className = 'note-head';
+  const kicker = document.createElement('span');
+  kicker.className = 'kicker';
+  kicker.textContent = spec.clientVisible ? 'Emails the client' : 'Goes on the ticket';
+  const hint = document.createElement('span');
+  hint.className = 'note-hint';
+  hint.textContent = answerPosted ? 'Posted' : 'Exactly as shown. Click to edit.';
+  head.append(kicker, hint);
+
+  const text = document.createElement('div');
+  text.className = 'note-text';
+  text.setAttribute('role', 'textbox');
+  text.setAttribute('aria-multiline', 'true');
+  text.setAttribute('aria-label', spec.clientVisible ? 'Reply to post' : 'Work note to post');
+  text.contentEditable = answerPosted ? 'false' : 'plaintext-only';
+  text.spellcheck = true;
+  text.textContent = noteDraft;
+  text.addEventListener('input', () => {
+    noteDraft = text.innerText.replace(/\u00a0/g, ' ');
+    postArmed = false;
+    syncPostButton();
+  });
+  text.addEventListener('blur', () => void saveNoteEdit());
+  card.append(head, text);
+
+  if (noteSource === 'cleaned' && !answerPosted) {
+    const check = document.createElement('p');
+    check.className = 'note-check';
+    check.textContent = 'TerrierGPT did not mark the note, so the companion took out what looked like comments to you. Check it before posting.';
+    card.append(check);
+  }
+
+  const parts = [card];
+  if (split.aside) {
+    const aside = document.createElement('details');
+    aside.className = 'note-aside';
+    const summary = document.createElement('summary');
+    summary.textContent = 'From TerrierGPT, not posted';
+    const body = document.createElement('div');
+    body.className = 'note-aside-body';
+    body.innerHTML = renderMarkdown(split.aside);
+    aside.append(summary, body);
+    parts.push(aside);
+  }
+  el.responseBody.replaceChildren(...parts);
+}
+
+async function saveNoteEdit() {
+  const url = shownURL || currentPage?.url || '';
+  const saved = url ? (await loadAnswers())[url] : null;
+  if (!saved?.text || saved.text !== answerRaw) return;
+  await rememberAnswer(url, { ...saved, note: noteDraft });
 }
 
 function syncPostButton() {
@@ -354,7 +434,7 @@ function syncPostButton() {
     return;
   }
   el.post.hidden = false;
-  el.post.disabled = posting || answerPosted;
+  el.post.disabled = posting || answerPosted || !noteDraft.trim();
   el.post.textContent = answerPosted
     ? (spec.clientVisible ? 'Reply posted' : 'Work note posted')
     : (postArmed ? spec.confirm : spec.verb);
@@ -365,6 +445,7 @@ function syncPostButton() {
 
 function clearAnswer() {
   answerRaw = '';
+  noteDraft = '';
   answerActionId = '';
   answerTicket = '';
   answerPosted = false;
@@ -401,7 +482,7 @@ async function restoreAnswer(url) {
   answerTicket = saved.ticketNumber || '';
   answerPosted = saved.posted === true;
   postArmed = false;
-  showAnswer(saved.text);
+  showAnswer(saved.text, { note: typeof saved.note === 'string' ? saved.note : null });
   el.answerLabel.textContent = saved.label || 'Answer';
   el.responseAgent.hidden = !saved.agent;
   el.responseAgent.textContent = saved.agent || '';
@@ -617,6 +698,10 @@ async function runAsk(instruction, { followUp = false, label = 'Answer', actionI
   }
 
   const keepAction = followUp ? (actionId || answerActionId) : actionId;
+  // A Reply or Work note is posted to the ticket, so ask for it in a form
+  // where the note can be told apart from TerrierGPT's comments to the analyst.
+  const postSpec = journalForAction(keepAction);
+  const asked = postSpec ? `${text}\n${postingInstruction(postSpec)}` : text;
   const keepTicket = followUp ? (answerTicket || currentPage?.ticket?.number || '') : (currentPage?.ticket?.number || '');
   if (picking) await stopPick(false);
   asking = true;
@@ -639,7 +724,7 @@ async function runAsk(instruction, { followUp = false, label = 'Answer', actionI
   try {
     const result = await ask({
       type: 'TG_ASK',
-      payload: { instruction: text, captures },
+      payload: { instruction: asked, captures },
     });
     if (stopped) {
       say('Stopped.');
@@ -652,11 +737,11 @@ async function runAsk(instruction, { followUp = false, label = 'Answer', actionI
       if (result?.reason === 'signed-out') showGear(true);
       return false;
     }
-    showAnswer(result.text || answerRaw || '');
     if (result.text) {
       answerActionId = keepAction || '';
       answerTicket = keepTicket;
       answerPosted = false;
+      showAnswer(result.text);
       say('Answer received.', 'ok');
       await rememberAnswer(askedURL, {
         text: result.text,
@@ -667,6 +752,7 @@ async function runAsk(instruction, { followUp = false, label = 'Answer', actionI
       });
       syncPostButton();
     } else {
+      showAnswer(answerRaw || '');
       say('TerrierGPT returned no text.', 'error');
     }
     return Boolean(result.text);
@@ -681,7 +767,7 @@ async function runAsk(instruction, { followUp = false, label = 'Answer', actionI
     asking = false;
     el.spinner.hidden = true;
     el.stop.hidden = true;
-    if (answerRaw) showAnswer(answerRaw);
+    if (answerRaw) showAnswer(answerRaw, { note: journalForAction(answerActionId) && noteDraft ? noteDraft : null });
     else showAnswer('');
     renderActions();
   }
@@ -870,7 +956,7 @@ async function postCurrentAnswer() {
     say(`This draft is for ${answerTicket}. This tab is ${liveNumber}.`, 'error');
     return;
   }
-  const prepared = postRequest({ field: spec.field, text: answerRaw, expectNumber });
+  const prepared = postRequest({ field: spec.field, text: noteDraft, expectNumber });
   if (!prepared.ok) {
     say(describe(prepared.reason), 'error');
     return;
@@ -913,7 +999,7 @@ async function postCurrentAnswer() {
     return;
   }
   answerPosted = true;
-  syncPostButton();
+  showAnswer(answerRaw, { note: noteDraft });
   const where = spec.clientVisible ? 'Reply posted. ServiceNow emails the client.' : 'Work note posted.';
   const check = result.confirmed === false ? ' Check the activity stream after the reload.' : '';
   say(`${where} ${result.number || prepared.expectNumber} is reloading.${check}`, 'ok');
@@ -923,6 +1009,7 @@ async function postCurrentAnswer() {
     agent: el.responseAgent.hidden ? '' : el.responseAgent.textContent,
     actionId: answerActionId,
     ticketNumber: answerTicket || result.number || prepared.expectNumber,
+    note: noteDraft,
     posted: true,
   });
 }
@@ -931,14 +1018,15 @@ el.copy.addEventListener('click', async () => {
   postArmed = false;
   syncPostButton();
   if (!answerRaw) return;
+  const isNote = Boolean(journalForAction(answerActionId) && noteDraft.trim());
   try {
-    await navigator.clipboard.writeText(answerRaw);
+    await navigator.clipboard.writeText(isNote ? noteDraft : answerRaw);
   } catch {
     say('Could not write to the clipboard.', 'error');
     return;
   }
   el.copy.querySelector('use')?.setAttribute('href', '#i-check');
-  say('Answer copied.', 'ok');
+  say(isNote ? 'Note copied, without TerrierGPT\'s comments.' : 'Answer copied.', 'ok');
   setTimeout(() => el.copy.querySelector('use')?.setAttribute('href', '#i-copy'), 1600);
 });
 
