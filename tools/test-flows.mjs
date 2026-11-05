@@ -116,6 +116,7 @@ const failureCodes = [
   'clipboard-error',
   'no-agents-found',
   'generation-timeout',
+  'answer-lost',
   'generation-stopped',
   'generation-failed',
   'bridge-missing',

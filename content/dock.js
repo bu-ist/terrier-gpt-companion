@@ -79,7 +79,7 @@
     document.documentElement.append(style);
   }
 
-  function build() {
+  function build(tabId) {
     ensureStyles();
     host = document.createElement('div');
     host.id = HOST_ID;
@@ -97,7 +97,10 @@
     frame.allow = 'clipboard-read; clipboard-write';
     // Extension pages need an explicit tabIndex so Safari will focus inputs inside.
     frame.tabIndex = 0;
-    frame.src = chrome.runtime.getURL('sidepanel/sidepanel.html?dock=1');
+    // The tab id lets this panel pick up only asks queued for this tab, not
+    // ones meant for a panel docked in another tab.
+    const tab = Number.isInteger(tabId) ? `&tab=${tabId}` : '';
+    frame.src = chrome.runtime.getURL(`sidepanel/sidepanel.html?dock=1${tab}`);
 
     host.append(grip, frame);
     document.documentElement.append(host);
@@ -136,13 +139,13 @@
     return Boolean(host?.isConnected) && host.dataset.open === 'true';
   }
 
-  async function open() {
+  async function open(tabId) {
     if (!host?.isConnected) {
       try {
         const stored = (await chrome.storage.local.get(WIDTH_KEY))[WIDTH_KEY];
         if (Number.isFinite(stored)) width = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, stored));
       } catch {}
-      build();
+      build(tabId);
     }
     host.style.width = `${width}px`;
     host.dataset.open = 'true';
@@ -159,8 +162,8 @@
     host.dataset.open = 'false';
   }
 
-  function toggle() {
-    return isOpen() ? close() : open();
+  function toggle(tabId) {
+    return isOpen() ? close() : open(tabId);
   }
 
   // The panel's close button posts here. Only its own frame is listened to.

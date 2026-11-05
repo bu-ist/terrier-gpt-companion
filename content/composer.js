@@ -366,8 +366,23 @@
     return '';
   }
 
+  /**
+   * Fire-and-forget to the worker. Each message wakes it if Safari or Chrome
+   * unloaded it, so progress and the result survive a worker restart.
+   */
+  function report(type, payload) {
+    try {
+      const sent = chrome.runtime.sendMessage({ type, payload });
+      if (sent && typeof sent.catch === 'function') sent.catch(() => {});
+    } catch {}
+  }
+
+  // The last finished ask, so the panel can collect it if every message was lost.
+  let lastAsk = null;
+
   /** Injects prompt, presses send, and streams the assistant turn back. */
-  async function askAndWait({ text, newChat }) {
+  async function askAndWait({ text, newChat, askId }) {
+    if (askId) report('TG_ASK_ALIVE', { id: askId, stage: 'tab' });
     if (!text) return { ok: false, reason: 'empty-prompt' };
     if (isSignedOut()) return { ok: false, reason: 'signed-out' };
     if (isGenerating()) return { ok: false, reason: 'busy' };
@@ -403,16 +418,17 @@
       let lastText = '';
       let settledTimer = null;
       let settled = false;
+      let lastBeat = Date.now();
 
       const notifyUpdate = (streamText) => {
         if (streamText && streamText !== lastText) {
           lastText = streamText;
-          try {
-            chrome.runtime.sendMessage({
-              type: 'TG_STREAM_UPDATE',
-              payload: { text: streamText, isDone: false },
-            });
-          } catch {}
+          lastBeat = Date.now();
+          report('TG_STREAM_UPDATE', { id: askId, text: streamText, isDone: false });
+        } else if (askId && Date.now() - lastBeat > 10000) {
+          // Thinking without new tokens: still tell the panel the ask is alive.
+          lastBeat = Date.now();
+          report('TG_ASK_ALIVE', { id: askId, stage: isGenerating() ? 'generating' : 'settling' });
         }
       };
 
@@ -420,6 +436,7 @@
         if (settled) return;
         settled = true;
         observer.disconnect();
+        clearInterval(poll);
         clearTimeout(settledTimer);
         clearTimeout(maxTimeout);
         const finalText = latest() || lastText;
@@ -446,16 +463,22 @@
         settledTimer = setTimeout(() => finish(false), 900);
       };
 
-      const observer = new MutationObserver(() => {
+      const onChange = () => {
+        if (settled) return;
         notifyUpdate(latest());
         scheduleFinish();
-      });
+      };
+      const observer = new MutationObserver(onChange);
 
-      observer.observe(document.querySelector('main') || document.body, {
+      // The whole body, not <main>: LibreChat can swap <main> out when /c/new
+      // becomes /c/<id>, and an observer on the old node hears nothing until
+      // the 4-minute cap. The poll covers mutations a hidden tab never reports.
+      observer.observe(document.body || document.documentElement, {
         childList: true,
         subtree: true,
         characterData: true,
       });
+      const poll = setInterval(onChange, 1500);
       scheduleFinish();
 
       const maxTimeout = setTimeout(() => finish(true), 240000);
@@ -648,14 +671,32 @@
     }
 
     if (message?.type === 'TG_ASK_AND_WAIT') {
+      const askId = message.payload?.askId || null;
       (async () => {
+        let result;
         try {
-          sendResponse(await askAndWait(message.payload ?? {}));
+          result = await askAndWait(message.payload ?? {});
         } catch (error) {
-          sendResponse({ ok: false, reason: 'exception', detail: String(error) });
+          result = { ok: false, reason: 'exception', detail: String(error) };
         }
+        if (askId) {
+          lastAsk = { id: askId, result };
+          // The reply below can be lost if the worker restarted while
+          // TerrierGPT was writing. This message wakes it with the answer.
+          report('TG_ASK_RESULT', { id: askId, result });
+        }
+        try {
+          sendResponse(result);
+        } catch {}
       })();
       return true;
+    }
+
+    if (message?.type === 'TG_ASK_COLLECT') {
+      const id = message.payload?.id;
+      if (lastAsk && id && lastAsk.id === id) sendResponse({ ok: true, done: true, result: lastAsk.result });
+      else sendResponse({ ok: true, done: false, generating: isGenerating() });
+      return false;
     }
 
     return false;

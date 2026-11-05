@@ -11,10 +11,13 @@ import { parseAgentId, loadAgents, addAgent, agentsFor, searchAgents } from '../
 import { actionsFor, primaryAction, usesCatalog } from '../lib/actions.js';
 import { journalForAction, postRequest, postingInstruction, splitNote, NOTE_OPEN, NOTE_CLOSE } from '../lib/journal.js';
 import { renderMarkdown } from '../lib/markdown.js';
+import { askTracker, newAskId, forAsk, isUsableReply } from '../lib/ask-wait.js';
 
 const SELECTION_ID = 'auto-selection';
 /** Safari docks this page inside the tab (content/dock.js) instead of a side panel. */
 const DOCKED = new URLSearchParams(location.search).has('dock');
+// Safari: the tab this docked panel lives in, so it only answers asks queued for it.
+const DOCK_TAB = Number(new URLSearchParams(location.search).get('tab')) || null;
 /** Answers kept per page, so switching tabs and coming back does not lose one. */
 const ANSWERS_KEY = 'answers';
 const ANSWERS_KEPT = 20;
@@ -99,6 +102,7 @@ let asking = false;
 let picking = false;
 let handing = false;
 let stopped = false;
+let currentAsk = null;
 let refreshSeq = 0;
 let refreshTimer = null;
 let holdRefresh = 0;
@@ -647,7 +651,13 @@ function scheduleRefresh() {
 
 async function refreshPage() {
   const seq = ++refreshSeq;
-  const info = await ask({ type: 'TG_READ_ACTIVE_TAB' });
+  let info = null;
+  try {
+    info = await ask({ type: 'TG_READ_ACTIVE_TAB' });
+  } catch (error) {
+    // A worker that is restarting rejects; render "no access" rather than stall init.
+    info = { ok: false, reason: 'no-content', detail: String(error) };
+  }
   if (seq !== refreshSeq) return;
 
   const nextURL = info?.page?.url || info?.tab?.url || '';
@@ -721,17 +731,31 @@ async function runAsk(instruction, { followUp = false, label = 'Answer', actionI
   showAnswer('');
   say('Asking TerrierGPT…');
 
+  const askId = newAskId();
+  const tracker = askTracker();
+  currentAsk = { id: askId, tracker };
+
   try {
-    const result = await ask({
-      type: 'TG_ASK',
-      payload: { instruction: asked, captures },
-    });
+    // The direct reply is one of several ways the answer can come back. If the
+    // worker was unloaded mid-answer, the reply never comes or the channel
+    // closes; the stored result or a direct collect from the tab still lands.
+    ask({ type: 'TG_ASK', payload: { instruction: asked, captures, askId } })
+      .then((reply) => tracker.reply(reply), () => {});
+    let result = await tracker.promise;
+    if (!stopped && (result?.reason === 'answer-lost' || result?.reason === 'generation-timeout')) {
+      const collected = await ask({ type: 'TG_ASK_COLLECT', payload: { id: askId } }).catch(() => null);
+      if (collected?.done && isUsableReply(collected.result)) result = collected.result;
+    }
     if (stopped) {
       say('Stopped.');
       return false;
     }
     if (!result?.ok) {
       const message = describe(result?.reason);
+      if (answerRaw && result?.reason === 'answer-lost') {
+        say('The answer stopped arriving. The text above is what came through; open the TerrierGPT tab for the rest.', 'error');
+        return false;
+      }
       say(message, 'error');
       if (!answerRaw) showAnswer(message);
       if (result?.reason === 'signed-out') showGear(true);
@@ -764,12 +788,15 @@ async function runAsk(instruction, { followUp = false, label = 'Answer', actionI
     }
     return false;
   } finally {
+    if (currentAsk?.id === askId) currentAsk = null;
     asking = false;
     el.spinner.hidden = true;
     el.stop.hidden = true;
     if (answerRaw) showAnswer(answerRaw, { note: journalForAction(answerActionId) && noteDraft ? noteDraft : null });
     else showAnswer('');
     renderActions();
+    // An ask queued while this one ran waited its turn. Pick it up now.
+    setTimeout(() => void consumePending(), 50);
   }
 }
 
@@ -779,6 +806,10 @@ async function consumePending() {
     await catalogReady;
     const { pendingAsk } = await chrome.storage.session.get('pendingAsk');
     if (!pendingAsk?.id) return;
+    // Safari keeps a docked panel alive in every tab it was opened in. A hidden
+    // one taking the ask showed the answer where the user could not see it.
+    if (DOCKED && DOCK_TAB && pendingAsk.tabId && pendingAsk.tabId !== DOCK_TAB) return;
+    if (asking) return;
     await chrome.storage.session.remove('pendingAsk');
     holdRefresh += 1;
     try {
@@ -813,7 +844,7 @@ el.openSettings.addEventListener('click', () => {
 });
 el.signIn.addEventListener('click', async () => {
   showGear(false);
-  const result = await ask({ type: 'TG_SIGN_IN' });
+  const result = await ask({ type: 'TG_SIGN_IN' }).catch(() => null);
   say(result?.ok
     ? `BU Login opened in a new tab. Come back here once ${INSTANCES[currentInstance].label} loads.`
     : describe(result?.reason), result?.ok ? 'ok' : 'error');
@@ -1030,7 +1061,7 @@ el.copy.addEventListener('click', async () => {
   setTimeout(() => el.copy.querySelector('use')?.setAttribute('href', '#i-copy'), 1600);
 });
 
-el.openTab.addEventListener('click', () => void ask({ type: 'TG_FOCUS_TAB' }));
+el.openTab.addEventListener('click', () => void ask({ type: 'TG_FOCUS_TAB' }).catch(() => {}));
 
 el.pick.addEventListener('click', () => void togglePick());
 
@@ -1045,7 +1076,9 @@ el.dismiss.addEventListener('click', () => {
 
 el.stop.addEventListener('click', async () => {
   stopped = true;
-  await ask({ type: 'TG_STOP_GENERATION' });
+  // Free the panel now, even if the worker never answers the stop.
+  currentAsk?.tracker.stop();
+  await ask({ type: 'TG_STOP_GENERATION' }).catch(() => {});
   el.spinner.hidden = true;
   el.stop.hidden = true;
   say('Stopped.');
@@ -1087,7 +1120,7 @@ function setPicking(on) {
 
 async function stopPick(announce) {
   setPicking(false);
-  await ask({ type: 'TG_PICK_STOP' });
+  await ask({ type: 'TG_PICK_STOP' }).catch(() => {});
   if (announce) say('Pick cancelled.');
 }
 
@@ -1096,7 +1129,7 @@ async function togglePick() {
     await stopPick(true);
     return;
   }
-  const result = await ask({ type: 'TG_PICK' });
+  const result = await ask({ type: 'TG_PICK' }).catch(() => null);
   if (!result?.ok) {
     say(describe(result?.reason || 'no-access'), 'error');
     return;
@@ -1107,7 +1140,7 @@ async function togglePick() {
 
 async function addPicked(payload) {
   setPicking(false);
-  void ask({ type: 'TG_PICK_STOP' });
+  void ask({ type: 'TG_PICK_STOP' }).catch(() => {});
   const text = String(payload?.text || '').trim();
   if (!text) {
     say('That element has no text.');
@@ -1135,17 +1168,24 @@ async function sendHandoff(wake) {
   handing = true;
   renderActions();
   say(wake ? 'Sending to CTS Recipes…' : 'Saving to TerrierGPT Menu…');
-  const result = await ask({
-    type: 'TG_HANDOFF',
-    payload: {
-      wake,
-      text,
-      title: currentPage?.ticket?.number || currentPage?.title || '',
-      url: currentPage?.url || '',
-    },
-  });
-  handing = false;
-  renderActions();
+  let result = null;
+  try {
+    result = await ask({
+      type: 'TG_HANDOFF',
+      payload: {
+        wake,
+        text,
+        title: currentPage?.ticket?.number || currentPage?.title || '',
+        url: currentPage?.url || '',
+      },
+    });
+  } catch {
+    result = { ok: false, reason: 'bridge-failed' };
+  } finally {
+    // A thrown send used to leave both hand-off buttons disabled for good.
+    handing = false;
+    renderActions();
+  }
   if (!result?.ok) {
     say(describe(result?.reason || 'bridge-failed'), 'error');
     return;
@@ -1158,7 +1198,13 @@ chrome.storage.session.onChanged.addListener((changes) => {
   if (changes.captures) void refreshCapsules();
   if (changes.reread) scheduleRefresh();
   if (changes.pendingAsk?.newValue) void consumePending();
-  if (asking && changes.liveAnswer?.newValue?.text) showAnswer(changes.liveAnswer.newValue.text, { streaming: true });
+  const live = changes.liveAnswer?.newValue;
+  if (asking && currentAsk && live?.text && (forAsk(live, currentAsk.id) || !live.id)) {
+    currentAsk.tracker.text(live.text);
+    showAnswer(live.text, { streaming: true });
+  }
+  if (currentAsk && forAsk(changes.askAlive?.newValue, currentAsk.id)) currentAsk.tracker.alive();
+  if (currentAsk && forAsk(changes.askResult?.newValue, currentAsk.id)) currentAsk.tracker.settle(changes.askResult.newValue.result);
 });
 
 chrome.storage.local.onChanged.addListener((changes) => {
