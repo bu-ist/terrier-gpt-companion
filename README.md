@@ -178,6 +178,7 @@ node tools/test-pick.mjs       # element names for Pick
 node tools/test-bridge.mjs     # native host handoff and page read
 node tools/test-safari.mjs     # Safari build: manifest, bundled worker, dock, native bridge
 node tools/test-safari-ios.mjs # Safari on iOS: manifest, popup, Send to TerrierGPT for iPhone
+node tools/test-ask.mjs        # panel never stalls waiting on an ask
 node tools/build.mjs chrome    # → dist/chrome   (or: safari → dist/safari, safari-ios → dist/safari-ios)
 python3 tools/generate_icons.py
 ./tools/package.sh             # → dist/terriergpt-companion-<version>.zip

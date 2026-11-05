@@ -184,7 +184,8 @@ async function ensureWorkerTab(instance, url) {
   if (workerTabId && workerOrigin === instance.origin) {
     try {
       const existing = await chrome.tabs.get(workerTabId);
-      return { tab: existing, fresh: false };
+      // If the user took the tab somewhere else, it is theirs now. Leave it be.
+      if (!existing.url || existing.url.startsWith(`${instance.origin}/`)) return { tab: existing, fresh: false };
     } catch {
       // The user closed it. Open another below.
     }
@@ -304,7 +305,21 @@ async function sendToTerrier({ instruction, captures, openAndFocus = true }) {
  * Asks in a background tab and returns the assistant's text.
  * The active tab stays the page the user is reading.
  */
-async function askToTerrier({ instruction, captures }) {
+async function markAlive(askId, stage) {
+  if (!askId) return;
+  try {
+    await chrome.storage.session.set({ askAlive: { id: askId, stage, at: Date.now() } });
+  } catch {}
+}
+
+async function storeAskResult(askId, result) {
+  if (!askId) return;
+  try {
+    await chrome.storage.session.set({ askResult: { id: askId, result, at: Date.now() } });
+  } catch {}
+}
+
+async function askToTerrier({ instruction, captures, askId = null }) {
   const settings = await getSettings();
   const instance = INSTANCES[settings.instance];
   const text = compose(instruction, captures ?? (await loadCaptures()));
@@ -314,7 +329,8 @@ async function askToTerrier({ instruction, captures }) {
   const stamp = { instance: instance.id, agent: agent?.name ?? null, chars: text.length, via: 'composer' };
   const freshURL = agent ? chatURL(instance.origin, agent.id) : `${instance.origin}/c/new`;
 
-  await chrome.storage.session.remove('liveAnswer');
+  await chrome.storage.session.remove(['liveAnswer', 'askResult']);
+  await markAlive(askId, 'opening');
   const { tab, fresh } = await ensureWorkerTab(instance, freshURL);
   const keepConversation =
     !fresh &&
@@ -329,16 +345,35 @@ async function askToTerrier({ instruction, captures }) {
     await navigate(tab.id, freshURL);
   }
 
+  await markAlive(askId, 'loading');
   if (!(await waitForContentScript(tab.id))) {
+    await markAlive(askId, 'reloading');
     await navigate(tab.id, keepConversation ? tab.url : freshURL);
     if (!(await waitForContentScript(tab.id))) return { ok: false, reason: 'no-content-script' };
   }
 
+  await markAlive(askId, 'sending');
   const result = await chrome.tabs.sendMessage(tab.id, {
     type: 'TG_ASK_AND_WAIT',
-    payload: { text, newChat: false, agentId: agent?.id },
+    payload: { text, newChat: false, agentId: agent?.id, askId },
   });
   return { ...result, ...stamp };
+}
+
+/**
+ * The panel heard nothing for a long time. Ask the TerrierGPT tab directly
+ * whether this ask finished: the tab keeps its last result in memory.
+ */
+async function collectAsk(askId) {
+  const { workerTabId, askResult } = await chrome.storage.session.get(['workerTabId', 'askResult']);
+  if (askResult?.id === askId && askResult.result) return { ok: true, done: true, result: askResult.result };
+  if (!workerTabId) return { ok: true, done: false };
+  try {
+    const reply = await chrome.tabs.sendMessage(workerTabId, { type: 'TG_ASK_COLLECT', payload: { id: askId } });
+    return reply && typeof reply === 'object' ? reply : { ok: true, done: false };
+  } catch {
+    return { ok: true, done: false };
+  }
 }
 
 /**
@@ -443,8 +478,8 @@ async function toggleDock(tab, mode) {
     await chrome.scripting.executeScript({ target: { tabId: target.id }, files: ['content/dock.js'] });
     await chrome.scripting.executeScript({
       target: { tabId: target.id },
-      func: (how) => globalThis.__tgDock?.[how](),
-      args: [mode],
+      func: (how, tabId) => globalThis.__tgDock?.[how](tabId),
+      args: [mode, target.id],
     });
     return { ok: true };
   } catch (error) {
@@ -461,6 +496,8 @@ async function queueAsk(tab, instruction, extra = {}) {
       selection: extra.selection || '',
       url: extra.url || '',
       label: extra.label || '',
+      // Safari docks one panel per tab. Only the tab asked about should answer.
+      tabId: tab?.id ?? null,
     },
   });
   try {
@@ -874,10 +911,32 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         }
         case 'TG_ASK': {
-          const result = await askToTerrier(message.payload ?? {});
+          const askId = message.payload?.askId || null;
+          let result;
+          try {
+            result = await askToTerrier(message.payload ?? {});
+          } catch (error) {
+            result = { ok: false, reason: 'exception', detail: String(error) };
+          }
+          // A tab-side result (TG_ASK_RESULT) may already be stored; keep the richer one.
+          if (result?.ok || !(await chrome.storage.session.get('askResult')).askResult?.result?.ok) {
+            await storeAskResult(askId, result);
+          }
           sendResponse(result);
           break;
         }
+        case 'TG_ASK_RESULT': {
+          if (message.payload?.id && message.payload.result) await storeAskResult(message.payload.id, message.payload.result);
+          sendResponse({ ok: true });
+          break;
+        }
+        case 'TG_ASK_ALIVE':
+          await markAlive(message.payload?.id, message.payload?.stage || 'tab');
+          sendResponse({ ok: true });
+          break;
+        case 'TG_ASK_COLLECT':
+          sendResponse(await collectAsk(message.payload?.id));
+          break;
         case 'TG_SIGN_IN':
           sendResponse(await signIn());
           break;
@@ -927,7 +986,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
         case 'TG_STREAM_UPDATE': {
           const text = message.payload?.text || '';
-          if (text) await chrome.storage.session.set({ liveAnswer: { text, at: Date.now() } });
+          if (text) await chrome.storage.session.set({ liveAnswer: { id: message.payload?.id || null, text, at: Date.now() } });
           sendResponse({ ok: true });
           break;
         }

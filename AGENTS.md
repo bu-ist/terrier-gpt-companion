@@ -32,6 +32,7 @@ node tools/test-agents.mjs
 node tools/test-flows.mjs
 node tools/test-safari.mjs   # Safari build target
 node tools/test-safari-ios.mjs # iOS Safari build target
+node tools/test-ask.mjs      # panel never stalls waiting on an ask
 ```
 
 Build: `node tools/build.mjs chrome`, `safari`, or `safari-ios` (output in `dist/`, gitignored).
