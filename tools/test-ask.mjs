@@ -99,7 +99,7 @@ for (const type of ['TG_ASK_RESULT', 'TG_ASK_ALIVE', 'TG_ASK_COLLECT']) {
 check('the worker passes the ask id to the tab', /TG_ASK_AND_WAIT[\s\S]{0,120}askId/.test(worker));
 check('the panel sends an ask id', /type: 'TG_ASK', payload: \{[^}]*askId/.test(panel));
 check('the panel listens for stored results', panel.includes('changes.askResult'));
-check('docked panels only take asks for their own tab', panel.includes('pendingAsk.tabId !== DOCK_TAB'));
+check('docked panels only take asks for their own tab', panel.includes('!isMine(DOCKED ? { tabId: target.tabId } : target)'));
 
 if (failures) {
   console.error(`\n${failures} failure(s)`);

@@ -14,6 +14,7 @@
 import { INSTANCES, getSettings } from './lib/config.js';
 import { extractFromPage, pickExtraction, presentPage } from './lib/extract.js';
 import { makeCapture, compose, loadCaptures, addCapture } from './lib/prompt.js';
+import { scopeKey, scopeOfTab } from './lib/scope.js';
 import { describe } from './lib/messages.js';
 import { chatURL, loadAgents, agentsFor, mergeDiscoveredAgents } from './lib/agents.js';
 import { postJournalInPage, choosePostResult, postRequest } from './lib/journal.js';
@@ -78,14 +79,47 @@ if (HAS_SIDE_PANEL) {
 }
 
 chrome.storage.session.onChanged.addListener((changes) => {
-  if (changes.captures) refreshBadge();
+  if (Object.keys(changes).some((key) => key === 'captures' || key.startsWith('captures:'))) void refreshBadge();
 });
+chrome.tabs.onActivated.addListener(() => void refreshBadge());
 
+/** The panel scope a tab belongs to: its window in Chrome, the tab itself where panels dock. */
+function panelScope(tab) {
+  return scopeOfTab(tab, { perTab: !HAS_SIDE_PANEL });
+}
+
+/**
+ * The tab a panel means. A panel names its window (Chrome) or tab (Safari);
+ * with no scope, as from the iOS popup or the menu bar app, it is the active
+ * tab of the focused window.
+ */
+async function scopeTab(scope) {
+  if (Number.isInteger(scope?.tabId)) {
+    try {
+      return await chrome.tabs.get(scope.tabId);
+    } catch {
+      return null;
+    }
+  }
+  if (Number.isInteger(scope?.windowId)) {
+    const [tab] = await chrome.tabs.query({ active: true, windowId: scope.windowId });
+    return tab ?? null;
+  }
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  return tab ?? null;
+}
+
+/** Each window's badge counts that window's own context, not every window's. */
 async function refreshBadge() {
-  const captures = await loadCaptures();
-  const count = captures.filter((capture) => capture.enabled).length;
-  await chrome.action.setBadgeText({ text: count ? String(count) : '' });
-  await chrome.action.setBadgeBackgroundColor({ color: '#338AFF' });
+  try {
+    const tabs = await chrome.tabs.query({ active: true });
+    for (const tab of tabs) {
+      const captures = await loadCaptures(scopeKey(panelScope(tab)));
+      const count = captures.filter((capture) => capture.enabled).length;
+      await chrome.action.setBadgeText({ tabId: tab.id, text: count ? String(count) : '' });
+    }
+    await chrome.action.setBadgeBackgroundColor({ color: '#338AFF' });
+  } catch {}
 }
 
 // ------------------------------------------------------------------- capturing
@@ -138,7 +172,7 @@ async function capture(tab, { mode }) {
     body,
     partial: !wantsSelection && page.truncated ? `Truncated at ${read.maxPageChars.toLocaleString()} characters` : null,
   });
-  await addCapture(entry);
+  await addCapture(entry, scopeKey(panelScope(tab)));
   return { ok: true, capture: entry };
 }
 
@@ -168,9 +202,8 @@ async function readKnownTab(tab) {
   return { ok: true, page: read.page, tab: tabInfo, granted: true };
 }
 
-async function readActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return readKnownTab(tab);
+async function readActiveTab(scope) {
+  return readKnownTab(await scopeTab(scope));
 }
 
 // -------------------------------------------------------------------- sending
@@ -179,7 +212,7 @@ async function readActiveTab() {
  * A tab the panel owns, kept in the background so asking never steals the
  * ticket the user is looking at. The user's own TerrierGPT tab is left alone.
  */
-async function ensureWorkerTab(instance, url) {
+async function ensureWorkerTab(instance, url, readingScope = null) {
   const { workerTabId, workerOrigin } = await chrome.storage.session.get(['workerTabId', 'workerOrigin']);
   if (workerTabId && workerOrigin === instance.origin) {
     try {
@@ -190,8 +223,8 @@ async function ensureWorkerTab(instance, url) {
       // The user closed it. Open another below.
     }
   }
-  const [reading] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const tab = await chrome.tabs.create({ url, active: false });
+  const reading = await scopeTab(readingScope);
+  const tab = await chrome.tabs.create({ url, active: false, ...(reading ? { windowId: reading.windowId } : {}) });
   // If the browser brought the new tab forward anyway, go back to the page being read.
   if (reading && reading.id !== tab.id) {
     const [now] = await chrome.tabs.query({ active: true, windowId: reading.windowId });
@@ -319,7 +352,7 @@ async function storeAskResult(askId, result) {
   } catch {}
 }
 
-async function askToTerrier({ instruction, captures, askId = null }) {
+async function askToTerrier({ instruction, captures, askId = null }, scope = null) {
   const settings = await getSettings();
   const instance = INSTANCES[settings.instance];
   const text = compose(instruction, captures ?? (await loadCaptures()));
@@ -329,9 +362,10 @@ async function askToTerrier({ instruction, captures, askId = null }) {
   const stamp = { instance: instance.id, agent: agent?.name ?? null, chars: text.length, via: 'composer' };
   const freshURL = agent ? chatURL(instance.origin, agent.id) : `${instance.origin}/c/new`;
 
-  await chrome.storage.session.remove(['liveAnswer', 'askResult']);
+  // The previous ask's result stays: its panel may still collect it by id.
+  await chrome.storage.session.remove('liveAnswer');
   await markAlive(askId, 'opening');
-  const { tab, fresh } = await ensureWorkerTab(instance, freshURL);
+  const { tab, fresh } = await ensureWorkerTab(instance, freshURL, scope);
   const keepConversation =
     !fresh &&
     !agent &&
@@ -358,6 +392,34 @@ async function askToTerrier({ instruction, captures, askId = null }) {
     payload: { text, newChat: false, agentId: agent?.id, askId },
   });
   return { ...result, ...stamp };
+}
+
+/**
+ * One TerrierGPT tab answers every panel, and it can only answer one question
+ * at a time: a second ask used to navigate it away mid-answer, and the first
+ * window got the second window's text, or nothing. Asks from any window now
+ * wait their turn. A waiting ask reports itself alive so its panel does not
+ * give up on it.
+ */
+let askChain = Promise.resolve();
+let runningAskId = null;
+
+function queueAskInWorker(payload, scope) {
+  const askId = payload?.askId || null;
+  const waiting = setInterval(() => void markAlive(askId, 'queued'), 20_000);
+  void markAlive(askId, 'queued');
+  const run = askChain.then(async () => {
+    clearInterval(waiting);
+    runningAskId = askId;
+    try {
+      return await askToTerrier(payload, scope);
+    } finally {
+      runningAskId = null;
+    }
+  });
+  // The chain carries on whether this ask succeeded or threw.
+  askChain = run.catch(() => {});
+  return run.finally(() => clearInterval(waiting));
 }
 
 /**
@@ -424,10 +486,10 @@ async function syncAccountAgents() {
  * Opens BU Login for the selected instance. `/oauth/openid` is where
  * LibreChat's own "BU Login" button goes, so this skips the login page.
  */
-async function signIn() {
+async function signIn(scope) {
   const settings = await getSettings();
   const instance = INSTANCES[settings.instance];
-  const [current] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const current = await scopeTab(scope);
   const tab = await chrome.tabs.create({
     url: `${instance.origin}/oauth/openid`,
     active: true,
@@ -496,8 +558,10 @@ async function queueAsk(tab, instruction, extra = {}) {
       selection: extra.selection || '',
       url: extra.url || '',
       label: extra.label || '',
-      // Safari docks one panel per tab. Only the tab asked about should answer.
+      // Only the panel for this tab answers: its window's side panel in Chrome,
+      // its own dock in Safari.
       tabId: tab?.id ?? null,
+      windowId: tab?.windowId ?? null,
     },
   });
   try {
@@ -562,7 +626,7 @@ async function toast(tabId, message, tone = 'info') {
 
 chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === MENU.openPanel || info.menuItemId === MENU.capturePage) {
-    await chrome.storage.session.set({ reread: Date.now() });
+    await chrome.storage.session.set({ reread: { at: Date.now(), tabId: tab?.id ?? null, windowId: tab?.windowId ?? null } });
     try {
       await openPanel(tab);
     } catch {
@@ -583,7 +647,7 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
       url: info.linkUrl,
       body: info.linkUrl,
     });
-    await addCapture(entry);
+    await addCapture(entry, scopeKey(panelScope(tab)));
     await toast(tab?.id, 'Link added to TerrierGPT context');
     return;
   }
@@ -617,7 +681,7 @@ chrome.commands?.onCommand.addListener(async (command) => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
   if (command === 'capture-page') {
-    await chrome.storage.session.set({ reread: Date.now() });
+    await chrome.storage.session.set({ reread: { at: Date.now(), tabId: tab?.id ?? null, windowId: tab?.windowId ?? null } });
     try {
       await openPanel(tab);
     } catch {
@@ -757,10 +821,10 @@ async function catalogFromHost() {
   return { ok: false, reason: reply?.reason || 'no-catalog' };
 }
 
-async function postJournal(payload) {
+async function postJournal(payload, scope) {
   const prepared = postRequest(payload || {});
   if (!prepared.ok) return prepared;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await scopeTab(scope);
   if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) {
     return { ok: false, reason: 'unsupported-page' };
   }
@@ -849,14 +913,14 @@ async function answerPageRead(id) {
   } catch {}
 }
 
-async function activeHttpTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+async function activeHttpTab(scope) {
+  const tab = await scopeTab(scope);
   if (!tab?.id || !tab.url || !/^https?:/i.test(tab.url)) return null;
   return tab;
 }
 
-async function armPicker() {
-  const tab = await activeHttpTab();
+async function armPicker(scope) {
+  const tab = await activeHttpTab(scope);
   if (!tab) return { ok: false, reason: 'unsupported-page' };
   try {
     await chrome.scripting.executeScript({
@@ -869,8 +933,8 @@ async function armPicker() {
   }
 }
 
-async function disarmPicker() {
-  const tab = await activeHttpTab();
+async function disarmPicker(scope) {
+  const tab = await activeHttpTab(scope);
   if (!tab) return { ok: true };
   try {
     await chrome.scripting.executeScript({
@@ -894,14 +958,16 @@ if (!SAFARI_NATIVE) {
 // -------------------------------------------------------- messages from the UI
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // A panel says which window (Chrome) or tab (Safari) it belongs to.
+  const scope = message?.scope ?? null;
   (async () => {
     try {
       switch (message?.type) {
         case 'TG_READ_ACTIVE_TAB':
-          sendResponse(await readActiveTab());
+          sendResponse(await readActiveTab(scope));
           break;
         case 'TG_CAPTURE_ACTIVE_TAB': {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          const tab = await scopeTab(scope);
           sendResponse(await capture(tab, { mode: message.mode ?? 'auto' }));
           break;
         }
@@ -914,12 +980,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           const askId = message.payload?.askId || null;
           let result;
           try {
-            result = await askToTerrier(message.payload ?? {});
+            result = await queueAskInWorker(message.payload ?? {}, scope);
           } catch (error) {
             result = { ok: false, reason: 'exception', detail: String(error) };
           }
           // A tab-side result (TG_ASK_RESULT) may already be stored; keep the richer one.
-          if (result?.ok || !(await chrome.storage.session.get('askResult')).askResult?.result?.ok) {
+          const stored = (await chrome.storage.session.get('askResult')).askResult;
+          if (result?.ok || !(stored?.id === askId && stored.result?.ok)) {
             await storeAskResult(askId, result);
           }
           sendResponse(result);
@@ -938,7 +1005,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           sendResponse(await collectAsk(message.payload?.id));
           break;
         case 'TG_SIGN_IN':
-          sendResponse(await signIn());
+          sendResponse(await signIn(scope));
           break;
         case 'TG_SESSION':
           sendResponse(await sessionState());
@@ -956,8 +1023,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         }
         case 'TG_STOP_GENERATION': {
+          // Stop only the answer this panel is waiting for, never another window's.
+          const wanted = message.payload?.askId || null;
           const { workerTabId } = await chrome.storage.session.get('workerTabId');
-          if (workerTabId) {
+          if (workerTabId && (!wanted || wanted === runningAskId)) {
             try {
               await chrome.tabs.sendMessage(workerTabId, { type: 'TG_STOP_GENERATION' });
             } catch {}
@@ -991,10 +1060,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         }
         case 'TG_PICK':
-          sendResponse(await armPicker());
+          sendResponse(await armPicker(scope));
           break;
         case 'TG_PICK_STOP':
-          sendResponse(await disarmPicker());
+          sendResponse(await disarmPicker(scope));
           break;
         case 'TG_PICKED':
         case 'TG_PICK_CANCELLED':
@@ -1011,13 +1080,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           sendResponse(await toggleDock(null, 'open'));
           break;
         case 'TG_POST_JOURNAL':
-          sendResponse(await postJournal(message.payload ?? {}));
+          sendResponse(await postJournal(message.payload ?? {}, scope));
           break;
         case 'TG_CATALOG':
           sendResponse(await catalogFromHost());
           break;
         case 'TG_ACTIVE_TAB_INFO': {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          const tab = await scopeTab(scope);
           sendResponse({
             ok: true,
             title: tab?.title ?? '',

@@ -5,7 +5,8 @@
  */
 
 import { INSTANCES, getSettings, setSettings } from '../lib/config.js';
-import { SOURCE, makeCapture, loadCaptures, saveCaptures, addCapture } from '../lib/prompt.js';
+import { SOURCE, makeCapture, loadCaptures as loadScoped, saveCaptures as saveScoped, addCapture as addScoped, capturesKey } from '../lib/prompt.js';
+import { scopeKey, inScope } from '../lib/scope.js';
 import { describe } from '../lib/messages.js';
 import { parseAgentId, loadAgents, addAgent, agentsFor, searchAgents } from '../lib/agents.js';
 import { actionsFor, primaryAction, usesCatalog } from '../lib/actions.js';
@@ -18,6 +19,45 @@ const SELECTION_ID = 'auto-selection';
 const DOCKED = new URLSearchParams(location.search).has('dock');
 // Safari: the tab this docked panel lives in, so it only answers asks queued for it.
 const DOCK_TAB = Number(new URLSearchParams(location.search).get('tab')) || null;
+
+/**
+ * The part of the browser this panel belongs to: its own window in Chrome
+ * (one side panel per window), its own tab when docked in Safari. Every read,
+ * capture, pick, post, and queued ask is about this scope only, so two windows
+ * never see or send each other's pages. See lib/scope.js.
+ */
+let panelScope = null;
+let myCapturesKey = capturesKey('');
+const scopeReady = (async () => {
+  let scope = null;
+  if (DOCK_TAB) {
+    scope = { tabId: DOCK_TAB };
+  } else {
+    try {
+      const win = await chrome.windows.getCurrent();
+      if (Number.isInteger(win?.id)) scope = { windowId: win.id };
+    } catch {}
+  }
+  panelScope = scope;
+  myCapturesKey = capturesKey(scopeKey(scope));
+  return scope;
+})();
+
+/** Whether a tab, tab event, or queued request belongs to this panel. */
+function isMine({ tabId, windowId } = {}) {
+  return inScope(panelScope, { tabId, windowId });
+}
+
+// This panel's own context list. The store is per scope; see lib/prompt.js.
+async function loadCaptures() {
+  return loadScoped(scopeKey(await scopeReady));
+}
+async function saveCaptures(captures) {
+  return saveScoped(captures, scopeKey(await scopeReady));
+}
+async function addCapture(capture) {
+  return addScoped(capture, scopeKey(await scopeReady));
+}
 /** Answers kept per page, so switching tabs and coming back does not lose one. */
 const ANSWERS_KEY = 'answers';
 const ANSWERS_KEPT = 20;
@@ -115,8 +155,10 @@ function say(message, tone = 'info') {
   el.status.dataset.tone = tone;
 }
 
+/** Every message to the worker says which window or tab this panel is for. */
 async function ask(message) {
-  return chrome.runtime.sendMessage(message);
+  const scope = await scopeReady;
+  return chrome.runtime.sendMessage(scope ? { ...message, scope } : message);
 }
 
 function canRead() {
@@ -806,9 +848,11 @@ async function consumePending() {
     await catalogReady;
     const { pendingAsk } = await chrome.storage.session.get('pendingAsk');
     if (!pendingAsk?.id) return;
-    // Safari keeps a docked panel alive in every tab it was opened in. A hidden
-    // one taking the ask showed the answer where the user could not see it.
-    if (DOCKED && DOCK_TAB && pendingAsk.tabId && pendingAsk.tabId !== DOCK_TAB) return;
+    // Only the panel for the tab the ask came from takes it: that window's side
+    // panel in Chrome, that tab's dock in Safari. Every other panel leaves it.
+    await scopeReady;
+    const target = { tabId: pendingAsk.tabId ?? undefined, windowId: pendingAsk.windowId ?? undefined };
+    if ((pendingAsk.tabId != null || pendingAsk.windowId != null) && !isMine(DOCKED ? { tabId: target.tabId } : target)) return;
     if (asking) return;
     await chrome.storage.session.remove('pendingAsk');
     holdRefresh += 1;
@@ -1078,7 +1122,7 @@ el.stop.addEventListener('click', async () => {
   stopped = true;
   // Free the panel now, even if the worker never answers the stop.
   currentAsk?.tracker.stop();
-  await ask({ type: 'TG_STOP_GENERATION' }).catch(() => {});
+  await ask({ type: 'TG_STOP_GENERATION', payload: { askId: currentAsk?.id || null } }).catch(() => {});
   el.spinner.hidden = true;
   el.stop.hidden = true;
   say('Stopped.');
@@ -1100,7 +1144,9 @@ document.addEventListener('keydown', (event) => {
   if (!el.gearMenu.hidden) showGear(false);
 });
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, sender) => {
+  // The picker runs in one tab. Only that tab's panel hears what was picked.
+  if (/^TG_PICK/.test(message?.type || '') && !isMine({ tabId: sender?.tab?.id, windowId: sender?.tab?.windowId })) return;
   if (message?.type === 'TG_PICKED') void addPicked(message.payload);
   else if (message?.type === 'TG_PICK_CANCELLED') {
     if (picking) say('Pick cancelled.');
@@ -1195,15 +1241,24 @@ async function sendHandoff(wake) {
 }
 
 chrome.storage.session.onChanged.addListener((changes) => {
-  if (changes.captures) void refreshCapsules();
-  if (changes.reread) scheduleRefresh();
+  if (changes[myCapturesKey]) void refreshCapsules();
+  const reread = changes.reread?.newValue;
+  // A plain timestamp is an older worker's "every panel"; an object names the tab.
+  if (reread && (typeof reread !== 'object' || isMine({ tabId: reread.tabId, windowId: reread.windowId }))) scheduleRefresh();
   if (changes.pendingAsk?.newValue) void consumePending();
   const live = changes.liveAnswer?.newValue;
-  if (asking && currentAsk && live?.text && (forAsk(live, currentAsk.id) || !live.id)) {
+  // Streamed text belongs to one ask. Another window's answer is never shown here.
+  if (asking && currentAsk && live?.text && forAsk(live, currentAsk.id)) {
     currentAsk.tracker.text(live.text);
     showAnswer(live.text, { streaming: true });
   }
-  if (currentAsk && forAsk(changes.askAlive?.newValue, currentAsk.id)) currentAsk.tracker.alive();
+  const alive = changes.askAlive?.newValue;
+  if (currentAsk && forAsk(alive, currentAsk.id)) {
+    currentAsk.tracker.alive();
+    // Another window's question is in the TerrierGPT tab; this one takes its turn next.
+    if (alive.stage === 'queued' && !answerRaw) say('Waiting for another window\'s question to finish…');
+    else if (alive.stage !== 'queued' && el.status.textContent.startsWith('Waiting for another window')) say('Asking TerrierGPT…');
+  }
   if (currentAsk && forAsk(changes.askResult?.newValue, currentAsk.id)) currentAsk.tracker.settle(changes.askResult.newValue.result);
 });
 
@@ -1225,10 +1280,15 @@ document.addEventListener('pointerdown', (event) => {
   if (!el.gearMenu.hidden && !el.gearMenu.contains(event.target) && !el.settings.contains(event.target)) showGear(false);
 });
 
-chrome.tabs.onActivated.addListener(() => scheduleRefresh());
-chrome.tabs.onUpdated.addListener((_id, changeInfo, tab) => {
-  if (tab.active && changeInfo.url && picking) void stopPick(false);
-  if (tab.active && (changeInfo.status === 'complete' || changeInfo.url)) scheduleRefresh();
+// Tab events from other windows (Chrome) or other tabs (Safari dock) are not this panel's.
+chrome.tabs.onActivated.addListener((info) => {
+  if (isMine({ tabId: info.tabId, windowId: info.windowId })) scheduleRefresh();
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (!isMine({ tabId, windowId: tab.windowId })) return;
+  const showing = tab.active || DOCKED;
+  if (showing && changeInfo.url && picking) void stopPick(false);
+  if (showing && (changeInfo.status === 'complete' || changeInfo.url)) scheduleRefresh();
 });
 chrome.permissions.onAdded.addListener(() => scheduleRefresh());
 chrome.permissions.onRemoved.addListener(() => scheduleRefresh());
@@ -1253,6 +1313,7 @@ async function refreshCatalog() {
 const catalogReady = refreshCatalog();
 
 async function init() {
+  await scopeReady;
   const settings = await getSettings();
   applyInstance(settings.instance);
   await renderAgents(settings.agentId);

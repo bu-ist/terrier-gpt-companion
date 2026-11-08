@@ -237,6 +237,7 @@ Four bugs were found and fixed in that pass, all of them only visible in a live 
 
 ## Known limits
 
+- Several windows: each Chrome window's panel reads, captures, picks, and posts for its own window only, and Safari's dock for its own tab. Context (selection, clipboard, links, picks) is kept per window. All windows share one background TerrierGPT tab, so questions from two windows take turns: the second waits, still marked as working, until the first answer is in.
 - The composer selectors are pinned to LibreChat's `#prompt-textarea` and assistant turn.
   A LibreChat upgrade that renames them breaks injection. The panel reports
   `composer-not-found` rather than failing quietly.
