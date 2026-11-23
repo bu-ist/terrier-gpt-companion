@@ -20,7 +20,9 @@
   --rim-low: rgba(23, 24, 26, 0.09);
   --sheen: rgba(255, 255, 255, 0.5);
   --cast: rgba(23, 24, 26, 0.12);
-  --snap: 260ms cubic-bezier(0.34, 1.4, 0.64, 1);
+  --snap: 200ms cubic-bezier(0.2, 0, 0, 1);
+  /* Status text on --bg: the bright accents are under 4.5:1 on a light page. */
+  --status-error: var(--scarlet);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -34,6 +36,7 @@
     --rim-low: rgba(255, 255, 255, 0.06);
     --sheen: rgba(255, 255, 255, 0.14);
     --cast: rgba(0, 0, 0, 0.45);
+    --status-error: #f24a4f;
   }
 }
 
@@ -168,7 +171,13 @@ h1 { margin: 0; font-size: 20px; font-weight: 700; }
 .primary.done { background: linear-gradient(180deg, #3fe0a0, var(--jade)); }
 
 .status { margin: -4px 4px 0; min-height: 1.4em; font-size: 13px; color: var(--muted); text-align: center; }
-.status.error { color: var(--scarlet-soft); }
+.status.error { color: var(--status-error); }
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--scarlet) 70%, transparent);
+  outline-offset: 2px;
+}
 
 .secondary {
   display: flex;

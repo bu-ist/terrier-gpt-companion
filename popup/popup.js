@@ -20,6 +20,24 @@ function reason(code) {
   return APP_REASONS[code] || describe(code);
 }
 
+/**
+ * A message to the worker. A worker that is gone (unloaded, or the extension
+ * reloading) rejects; that comes back as a failure with the browser's reason.
+ */
+async function request(message) {
+  try {
+    return await chrome.runtime.sendMessage(message);
+  } catch (error) {
+    return { ok: false, reason: 'exception', unreachable: true, detail: String(error?.message || error) };
+  }
+}
+
+/** What went wrong, in words: the table's text, or the browser's own reason. */
+function failure(reply, fallback) {
+  if (reply?.unreachable) return `Could not reach the extension: ${reply.detail}`;
+  return reason(reply?.reason || fallback);
+}
+
 function setStatus(text, tone = '') {
   $('status').textContent = text;
   $('status').className = `status ${tone}`.trim();
@@ -40,11 +58,11 @@ function render() {
 }
 
 async function load() {
-  const read = await chrome.runtime.sendMessage({ type: 'TG_READ_ACTIVE_TAB' });
+  const read = await request({ type: 'TG_READ_ACTIVE_TAB' });
   if (!read?.ok) {
     $('title').textContent = read?.tab?.title || 'This page';
     $('host').textContent = read?.tab?.host || '';
-    setStatus(describe(read?.reason || 'no-content'), 'error');
+    setStatus(failure(read, 'no-content'), 'error');
     return;
   }
   page = read.page;
@@ -57,7 +75,7 @@ async function send() {
   $('send').disabled = true;
   $('send-label').textContent = 'Sending…';
   setStatus('');
-  const reply = await chrome.runtime.sendMessage({ type: 'TG_SEND_TO_APP', payload: { mode } });
+  const reply = await request({ type: 'TG_SEND_TO_APP', payload: { mode } });
   if (reply?.ok) {
     $('send').classList.add('done');
     $('send-label').textContent = 'Sent';
@@ -67,7 +85,7 @@ async function send() {
   }
   $('send').disabled = false;
   $('send-label').textContent = 'Send to TerrierGPT';
-  setStatus(reason(reply?.reason || 'unknown-message'), 'error');
+  setStatus(failure(reply, 'unknown-message'), 'error');
 }
 
 $('send').addEventListener('click', send);
@@ -78,9 +96,9 @@ for (const button of document.querySelectorAll('#modes button')) {
   });
 }
 $('open-dock').addEventListener('click', async () => {
-  const reply = await chrome.runtime.sendMessage({ type: 'TG_OPEN_DOCK' });
+  const reply = await request({ type: 'TG_OPEN_DOCK' });
   if (reply?.ok) window.close();
-  else setStatus(describe(reply?.reason || 'unsupported-page'), 'error');
+  else setStatus(failure(reply, 'unsupported-page'), 'error');
 });
 
 load();

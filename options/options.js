@@ -9,6 +9,7 @@ const el = {
   instanceNote: document.getElementById('instance-note'),
   newChat: document.getElementById('new-chat'),
   maxChars: document.getElementById('max-chars'),
+  maxCharsError: document.getElementById('max-chars-error'),
   agents: document.getElementById('agents'),
   noAgents: document.getElementById('no-agents'),
   syncAgents: document.getElementById('sync-agents'),
@@ -17,12 +18,14 @@ const el = {
   status: document.getElementById('status'),
 };
 
-function say(message) {
+/** Confirmations clear quickly; errors stay long enough to read. */
+function say(message, tone = 'info') {
   el.status.textContent = message;
+  el.status.dataset.tone = tone;
   clearTimeout(say.timer);
   say.timer = setTimeout(() => {
     el.status.textContent = '';
-  }, 4000);
+  }, tone === 'error' ? 10_000 : 4000);
 }
 
 /** Origins the extension was granted at runtime — the two TerrierGPT hosts are
@@ -133,17 +136,23 @@ el.newChat.addEventListener('change', async () => {
 
 el.maxChars.addEventListener('change', async () => {
   const value = Number(el.maxChars.value);
-  if (!Number.isFinite(value) || value < 1000) {
-    el.maxChars.value = DEFAULTS.maxPageChars;
+  if (!el.maxChars.value.trim() || !Number.isFinite(value) || value < 1000 || value > 200000) {
+    const { maxPageChars } = await getSettings();
+    el.maxChars.value = maxPageChars ?? DEFAULTS.maxPageChars;
+    el.maxCharsError.textContent = `Enter a number from 1,000 to 200,000. Kept ${Number(el.maxChars.value).toLocaleString()}.`;
+    el.maxCharsError.hidden = false;
+    el.maxChars.setAttribute('aria-invalid', 'true');
     return;
   }
-  await setSettings({ maxPageChars: Math.min(value, 200000) });
-  say('Saved');
+  el.maxCharsError.hidden = true;
+  el.maxChars.removeAttribute('aria-invalid');
+  await setSettings({ maxPageChars: value });
+  say('Saved', 'ok');
 });
 
 document.getElementById('sign-in').addEventListener('click', async () => {
   const res = await chrome.runtime.sendMessage({ type: 'TG_SIGN_IN' });
-  say(res?.ok ? 'BU Login opened in a new tab.' : describe(res?.reason));
+  say(res?.ok ? 'BU Login opened in a new tab.' : describe(res?.reason), res?.ok ? 'ok' : 'error');
 });
 
 el.syncAgents?.addEventListener('click', async () => {
@@ -157,10 +166,10 @@ el.syncAgents?.addEventListener('click', async () => {
         ? `Found ${res.discoveredCount} agent${res.discoveredCount === 1 ? '' : 's'} in your TerrierGPT account.`
         : `Found ${res.discoveredCount} agent${res.discoveredCount === 1 ? '' : 's'} on the open page. The account list did not answer.`);
     } else {
-      say(describe(res?.reason));
+      say(describe(res?.reason), 'error');
     }
   } catch (err) {
-    say(String(err));
+    say(String(err), 'error');
   } finally {
     el.syncAgents.disabled = false;
   }

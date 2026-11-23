@@ -44,7 +44,7 @@
         box-sizing: border-box;
         background: transparent;
         box-shadow: -18px 0 48px rgba(0,0,0,.22), -1px 0 0 rgba(127,127,127,.25);
-        transition: transform 420ms cubic-bezier(0.22,1.1,0.36,1);
+        transition: transform 220ms cubic-bezier(0.22,1,0.36,1);
       }
       #${HOST_ID}[data-open="false"] {
         pointer-events: none;
@@ -84,6 +84,9 @@
     host = document.createElement('div');
     host.id = HOST_ID;
     host.dataset.open = 'false';
+    // Closed, the dock is only slid off-screen: keep it out of focus and screen readers.
+    host.inert = true;
+    host.setAttribute('aria-hidden', 'true');
     host.style.width = `${width}px`;
 
     grip = document.createElement('div');
@@ -148,6 +151,9 @@
       build(tabId);
     }
     host.style.width = `${width}px`;
+    host.inert = false;
+    host.removeAttribute('inert');
+    host.removeAttribute('aria-hidden');
     host.dataset.open = 'true';
     // Nudge Safari to focus the dock so the ask field can take keystrokes.
     requestAnimationFrame(() => {
@@ -160,6 +166,8 @@
   function close() {
     if (!host?.isConnected) return;
     host.dataset.open = 'false';
+    host.inert = true;
+    host.setAttribute('aria-hidden', 'true');
   }
 
   function toggle(tabId) {

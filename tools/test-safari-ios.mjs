@@ -112,6 +112,42 @@ try {
   const popup = readFileSync(join(OUT, 'popup/popup.js'), 'utf8');
   check('the popup sends through the worker', popup.includes("type: 'TG_SEND_TO_APP'"));
   check('the popup never opens the app on its own', !/location\.href\s*=|window\.open\(/.test(popup));
+  // A worker that is not there (unloaded, or the extension reloading) rejects
+  // sendMessage. The popup must say so, not sit on "Sending…" for good.
+  {
+    const { describe } = await import(new URL(`file://${join(OUT, 'lib/messages.js')}`).href);
+    const elements = {};
+    const element = (id) => (elements[id] ??= {
+      id, textContent: '', className: '', hidden: false, disabled: false, handlers: {},
+      classList: { add() {}, remove() {} },
+      setAttribute() {},
+      addEventListener(type, fn) { this.handlers[type] = fn; },
+    });
+    const sandbox = {
+      console, setTimeout, Promise,
+      describe,
+      window: { close() {} },
+      document: { getElementById: element, querySelectorAll: () => [] },
+      chrome: { runtime: { sendMessage: () => Promise.reject(new Error('Could not establish connection. Receiving end does not exist.')) } },
+    };
+    vm.createContext(sandbox);
+    let unhandled = 0;
+    const onUnhandled = () => { unhandled += 1; };
+    process.on('unhandledRejection', onUnhandled);
+    vm.runInContext(popup.replace(/^import .*$/m, ''), sandbox, { filename: 'popup.js' });
+    await new Promise((r) => setTimeout(r, 20));
+    check('a popup that cannot reach the worker says why on load', Boolean(element('status').textContent));
+    element('status').textContent = '';
+    element('send').disabled = false;
+    await element('send').handlers.click?.();
+    await new Promise((r) => setTimeout(r, 20));
+    check('a failed send does not stay on "Sending…"', element('send-label').textContent !== 'Sending…' && element('send').disabled === false);
+    check('and the status line says what went wrong', /establish connection|TerrierGPT/i.test(element('status').textContent));
+    await element('open-dock').handlers.click?.();
+    await new Promise((r) => setTimeout(r, 20));
+    process.off('unhandledRejection', onUnhandled);
+    check('no popup action leaves a rejection unhandled', unhandled === 0);
+  }
   const html = readFileSync(join(OUT, 'popup/popup.html'), 'utf8');
   check('Open TerrierGPT is a link the user taps', html.includes('href="terriergpt://capture"'));
 } finally {

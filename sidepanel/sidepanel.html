@@ -44,8 +44,8 @@
       </div>
       <span class="spacer"></span>
       <div class="segment glass" role="radiogroup" aria-label="TerrierGPT instance">
-        <button id="instance-prod" type="button" data-instance="prod" aria-pressed="true">Prod</button>
-        <button id="instance-test" type="button" data-instance="test" aria-pressed="false">Test</button>
+        <button id="instance-prod" type="button" role="radio" data-instance="prod" aria-checked="true">Prod</button>
+        <button id="instance-test" type="button" role="radio" data-instance="test" aria-checked="false">Test</button>
       </div>
       <button id="agent-chip" class="glass round tint-violet" type="button" aria-expanded="false" aria-controls="menu" title="Choose an agent">
         <svg aria-hidden="true"><use href="#i-person" /></svg>
@@ -182,7 +182,7 @@
           <svg aria-hidden="true"><use href="#i-clipboard" /></svg>
         </button>
         <label class="sr-only" for="instruction">Ask about this page</label>
-        <input id="instruction" class="ask-input" type="text" placeholder="Ask about this page" autocomplete="off" />
+        <input id="instruction" class="ask-input" type="text" aria-label="Ask about this page" placeholder="Ask about this page" autocomplete="off" />
         <button id="send" class="ask-send" type="submit" title="Ask (Enter)" aria-label="Ask">
           <svg aria-hidden="true"><use href="#i-up" /></svg>
         </button>

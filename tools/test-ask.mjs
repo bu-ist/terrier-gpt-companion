@@ -77,6 +77,19 @@ check('ask ids are unique', newAskId() !== newAskId());
   check('the ceiling ends even a chatty ask', r.reason === 'generation-timeout');
 }
 
+// ------------------------------------- queue wait does not count toward the ceiling
+{
+  const t = askTracker({ idleMs: 200, maxMs: 80 });
+  const beat = setInterval(() => t.alive('queued'), 10);
+  await sleep(120);
+  clearInterval(beat);
+  t.alive('opening');
+  await sleep(40);
+  check('time spent queued behind another window does not count toward the ceiling', !t.done);
+  const r = await t.promise;
+  check('the ceiling still applies once the ask starts', r.reason === 'generation-timeout');
+}
+
 // --------------------------------------------------------------- stop
 {
   const t = askTracker({ idleMs: 1000 });
@@ -100,6 +113,42 @@ check('the worker passes the ask id to the tab', /TG_ASK_AND_WAIT[\s\S]{0,120}as
 check('the panel sends an ask id', /type: 'TG_ASK', payload: \{[^}]*askId/.test(panel));
 check('the panel listens for stored results', panel.includes('changes.askResult'));
 check('docked panels only take asks for their own tab', panel.includes('!isMine(DOCKED ? { tabId: target.tabId } : target)'));
+
+check('the tab ignores a Stop meant for another ask', /type === 'TG_STOP_GENERATION'\) \{[\s\S]{0,200}wanted !== runningAskId/.test(composer));
+
+// ------------------------- the Enter-key fallback only counts a send that happened
+{
+  /** One function from composer.js, braces matched, run against stubs. */
+  const fnSource = (src, name) => {
+    const start = src.search(new RegExp(`(async )?function ${name}\\(`));
+    const open = src.indexOf('{', src.indexOf(')', start));
+    let depth = 0;
+    for (let i = open; i < src.length; i += 1) {
+      if (src[i] === '{') depth += 1;
+      else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+    }
+    return '';
+  };
+  const helpers = ['waitUntil', 'composerText', 'triggerSend'].map((name) => fnSource(composer, name)).filter(Boolean).join('\n');
+  const vm = await import('node:vm');
+  const run = (composerStub, generating = () => false) => {
+    const sandbox = {
+      setTimeout, Date,
+      findSendButton: () => null,
+      isGenerating: generating,
+      KeyboardEvent: class { constructor(type, init) { Object.assign(this, { type }, init); } },
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(`${helpers}\nglobalThis.triggerSend = triggerSend;`, sandbox);
+    return sandbox.triggerSend(composerStub);
+  };
+  const ignored = { value: 'question', focus() {}, dispatchEvent() {} };
+  const t0 = Date.now();
+  check('an Enter that changed nothing is send-unavailable, not a send', (await run(ignored)) === false);
+  check('and it gives up within a few seconds', Date.now() - t0 < 6000);
+  const taken = { value: 'question', focus() {}, dispatchEvent() { setTimeout(() => { taken.value = ''; }, 200); } };
+  check('an Enter that cleared the composer counts as sent', (await run(taken)) === true);
+}
 
 if (failures) {
   console.error(`\n${failures} failure(s)`);

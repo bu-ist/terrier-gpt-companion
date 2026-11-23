@@ -61,6 +61,8 @@ async function addCapture(capture) {
 /** Answers kept per page, so switching tabs and coming back does not lose one. */
 const ANSWERS_KEY = 'answers';
 const ANSWERS_KEPT = 20;
+/** A queued ask the panel did not pick up within this long is stale: the user has moved on. */
+const PENDING_ASK_MAX_MS = 2 * 60_000;
 /** One accent per action, in order, like the Mac app's dock. The primary stays scarlet. */
 const ACTION_TINTS = ['azure', 'violet', 'jade', 'surf', 'ember', 'gold'];
 const AVATAR_HUES = ['#8f5cfa', '#338aff', '#21cc85', '#ff7833', '#2ecced', '#cc0a21', '#ffbd38'];
@@ -134,6 +136,8 @@ let noteDraft = '';
 let noteSource = '';
 let answerActionId = '';
 let answerTicket = '';
+/** The page the shown answer was asked about. */
+let answerURL = '';
 let answerPosted = false;
 let postArmed = false;
 let postArmedAt = 0;
@@ -149,6 +153,28 @@ let holdRefresh = 0;
 let consumeLock = null;
 let currentInstance = 'prod';
 let selectedAgent = null;
+/** A streaming answer follows the new text only while the reader is this close to the bottom. */
+const STICK_PX = 40;
+/** Streamed text waiting for the next frame: one render per frame, however fast it arrives. */
+let streamFrame = 0;
+let streamText = '';
+
+function queueStream(text) {
+  streamText = text;
+  if (streamFrame) return;
+  streamFrame = requestAnimationFrame(() => {
+    streamFrame = 0;
+    if (asking) showAnswer(streamText, { streaming: true });
+  });
+}
+
+/** Renders streamed text still waiting on a frame (or drops it once the ask is over). */
+function flushStream(render = true) {
+  if (!streamFrame) return;
+  cancelAnimationFrame(streamFrame);
+  streamFrame = 0;
+  if (render && asking) showAnswer(streamText, { streaming: true });
+}
 
 function say(message, tone = 'info') {
   el.status.textContent = message || '';
@@ -374,6 +400,9 @@ async function forceSelection(text, url) {
 }
 
 function showAnswer(raw, { streaming = false, note = null } = {}) {
+  const body = el.responseBody;
+  // Measured before the re-render: a reader who scrolled up to read stays put.
+  const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight <= STICK_PX;
   answerRaw = raw || '';
   el.responseBody.classList.toggle('streaming', streaming && Boolean(answerRaw));
   if (!answerRaw) {
@@ -400,7 +429,7 @@ function showAnswer(raw, { streaming = false, note = null } = {}) {
     noteDraft = '';
     noteSource = '';
   }
-  if (streaming) el.responseBody.scrollTop = el.responseBody.scrollHeight;
+  if (streaming && nearBottom) body.scrollTop = body.scrollHeight;
   el.answerFoot.hidden = streaming;
   el.dismiss.hidden = streaming;
   syncPostButton();
@@ -494,6 +523,7 @@ function clearAnswer() {
   noteDraft = '';
   answerActionId = '';
   answerTicket = '';
+  answerURL = '';
   answerPosted = false;
   postArmed = false;
   showAnswer('');
@@ -526,6 +556,7 @@ async function restoreAnswer(url) {
   }
   answerActionId = saved.actionId || '';
   answerTicket = saved.ticketNumber || '';
+  answerURL = url;
   answerPosted = saved.posted === true;
   postArmed = false;
   showAnswer(saved.text, { note: typeof saved.note === 'string' ? saved.note : null });
@@ -676,8 +707,8 @@ function showMenu(open) {
 function applyInstance(id) {
   const instance = INSTANCES[id] ? id : 'prod';
   currentInstance = instance;
-  el.prod.setAttribute('aria-pressed', String(instance === 'prod'));
-  el.test.setAttribute('aria-pressed', String(instance === 'test'));
+  el.prod.setAttribute('aria-checked', String(instance === 'prod'));
+  el.test.setAttribute('aria-checked', String(instance === 'test'));
   el.testPill.hidden = instance !== 'test';
   el.prod.title = INSTANCES.prod.origin;
   el.test.title = INSTANCES.test.origin;
@@ -766,6 +797,7 @@ async function runAsk(instruction, { followUp = false, label = 'Answer', actionI
   el.answerLabel.textContent = label || 'Answer';
   const agentLabel = selectedAgent?.name ?? '';
   const askedURL = currentPage?.url || shownURL;
+  answerURL = askedURL;
   el.responseAgent.hidden = !agentLabel;
   el.responseAgent.textContent = agentLabel;
   el.spinner.hidden = false;
@@ -784,6 +816,7 @@ async function runAsk(instruction, { followUp = false, label = 'Answer', actionI
     ask({ type: 'TG_ASK', payload: { instruction: asked, captures, askId } })
       .then((reply) => tracker.reply(reply), () => {});
     let result = await tracker.promise;
+    flushStream();
     if (!stopped && (result?.reason === 'answer-lost' || result?.reason === 'generation-timeout')) {
       const collected = await ask({ type: 'TG_ASK_COLLECT', payload: { id: askId } }).catch(() => null);
       if (collected?.done && isUsableReply(collected.result)) result = collected.result;
@@ -830,6 +863,7 @@ async function runAsk(instruction, { followUp = false, label = 'Answer', actionI
     }
     return false;
   } finally {
+    flushStream(false);
     if (currentAsk?.id === askId) currentAsk = null;
     asking = false;
     el.spinner.hidden = true;
@@ -848,6 +882,10 @@ async function consumePending() {
     await catalogReady;
     const { pendingAsk } = await chrome.storage.session.get('pendingAsk');
     if (!pendingAsk?.id) return;
+    if (Number.isFinite(pendingAsk.at) && Date.now() - pendingAsk.at > PENDING_ASK_MAX_MS) {
+      await chrome.storage.session.remove('pendingAsk');
+      return;
+    }
     // Only the panel for the tab the ask came from takes it: that window's side
     // panel in Chrome, that tab's dock in Safari. Every other panel leaves it.
     await scopeReady;
@@ -1023,6 +1061,8 @@ el.post.addEventListener('click', () => void postCurrentAnswer());
 async function postCurrentAnswer() {
   const spec = journalForAction(answerActionId);
   if (!spec || posting || answerPosted) return;
+  // The panel may show another tab's page by the time the post lands.
+  const postURL = shownURL || currentPage?.url || '';
   const liveNumber = currentPage?.ticket?.number || '';
   const expectNumber = answerTicket || liveNumber;
   if (answerTicket && liveNumber && answerTicket !== liveNumber) {
@@ -1078,7 +1118,7 @@ async function postCurrentAnswer() {
   const where = spec.clientVisible ? 'Reply posted. ServiceNow emails the client.' : 'Work note posted.';
   const check = result.confirmed === false ? ' Check the activity stream after the reload.' : '';
   say(`${where} ${result.number || prepared.expectNumber} is reloading.${check}`, 'ok');
-  await rememberAnswer(shownURL || currentPage?.url || '', {
+  await rememberAnswer(postURL, {
     text: answerRaw,
     label: el.answerLabel.textContent,
     agent: el.responseAgent.hidden ? '' : el.responseAgent.textContent,
@@ -1221,8 +1261,9 @@ async function sendHandoff(wake) {
       payload: {
         wake,
         text,
-        title: currentPage?.ticket?.number || currentPage?.title || '',
-        url: currentPage?.url || '',
+        // The ticket and page the answer was asked about, not whatever tab is showing now.
+        title: answerTicket || (currentPage?.url === answerURL ? currentPage?.ticket?.number || currentPage?.title : '') || '',
+        url: answerURL || currentPage?.url || '',
       },
     });
   } catch {
@@ -1250,11 +1291,11 @@ chrome.storage.session.onChanged.addListener((changes) => {
   // Streamed text belongs to one ask. Another window's answer is never shown here.
   if (asking && currentAsk && live?.text && forAsk(live, currentAsk.id)) {
     currentAsk.tracker.text(live.text);
-    showAnswer(live.text, { streaming: true });
+    queueStream(live.text);
   }
   const alive = changes.askAlive?.newValue;
   if (currentAsk && forAsk(alive, currentAsk.id)) {
-    currentAsk.tracker.alive();
+    currentAsk.tracker.alive(alive.stage);
     // Another window's question is in the TerrierGPT tab; this one takes its turn next.
     if (alive.stage === 'queued' && !answerRaw) say('Waiting for another window\'s question to finish…');
     else if (alive.stage !== 'queued' && el.status.textContent.startsWith('Waiting for another window')) say('Asking TerrierGPT…');
