@@ -40,3 +40,4 @@ body.options {
 .options .chip { grid-template-columns: 1fr auto; }
 .options .agent-actions { display: flex; }
 .options .status { margin-top: 14px; }
+.options .field-error { color: var(--status-error); }

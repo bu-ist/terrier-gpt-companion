@@ -34,6 +34,7 @@ node tools/test-safari.mjs   # Safari build target
 node tools/test-safari-ios.mjs # iOS Safari build target
 node tools/test-ask.mjs      # panel never stalls waiting on an ask
 node tools/test-windows.mjs  # each window's panel keeps to its own window (dock: its own tab)
+node tools/test-ui.mjs       # status contrast, motion, feedback timing, dock inert, ARIA
 ```
 
 Build: `node tools/build.mjs chrome`, `safari`, or `safari-ios` (output in `dist/`, gitignored).
@@ -58,3 +59,8 @@ Store ZIP: `./tools/package.sh`.
 
 Team repo (`bu-ist`): work on a branch and open a PR. No real ticket content, names, or
 screenshots of client data in tests, fixtures, or commits.
+
+## Lessons
+
+- Text the analyst has seen (and may have edited) is posted exactly as shown. Cleanup such as
+  `splitNote` runs once, before display, never again on the way out.

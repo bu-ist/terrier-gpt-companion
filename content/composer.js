@@ -195,6 +195,11 @@
     return waitUntil(() => location.pathname === NEW_CHAT_PATH, 4000);
   }
 
+  /** What the composer holds, for telling whether a send took it. */
+  function composerText(composer) {
+    return String(composer?.value ?? composer?.innerText ?? composer?.textContent ?? '');
+  }
+
   /** Submits the prompt either by clicking Send or simulating Enter key. */
   async function triggerSend(composer) {
     const ready = await waitUntil(() => {
@@ -208,8 +213,10 @@
       return true;
     }
 
-    // Keyboard Enter fallback
+    // Keyboard Enter fallback. A synthetic Enter is often ignored, so it only
+    // counts as sent when the composer changed or generation started soon after.
     if (composer) {
+      const before = composerText(composer);
       composer.focus();
       composer.dispatchEvent(
         new KeyboardEvent('keydown', {
@@ -221,7 +228,7 @@
           cancelable: true,
         })
       );
-      return true;
+      return waitUntil(() => isGenerating() || composerText(composer) !== before, 1500);
     }
 
     return false;
@@ -379,6 +386,8 @@
 
   // The last finished ask, so the panel can collect it if every message was lost.
   let lastAsk = null;
+  // The ask this tab is answering, so a Stop meant for another ask is ignored.
+  let runningAskId = null;
 
   /** Injects prompt, presses send, and streams the assistant turn back. */
   async function askAndWait({ text, newChat, askId }) {
@@ -653,6 +662,11 @@
     }
 
     if (message?.type === 'TG_STOP_GENERATION') {
+      const wanted = message.payload?.askId || null;
+      if (wanted && wanted !== runningAskId) {
+        sendResponse({ ok: false, reason: 'other-ask' });
+        return false;
+      }
       const btn = findStopButton();
       if (btn) btn.click();
       sendResponse({ ok: Boolean(btn) });
@@ -672,6 +686,7 @@
 
     if (message?.type === 'TG_ASK_AND_WAIT') {
       const askId = message.payload?.askId || null;
+      runningAskId = askId;
       (async () => {
         let result;
         try {
@@ -679,6 +694,7 @@
         } catch (error) {
           result = { ok: false, reason: 'exception', detail: String(error) };
         }
+        if (runningAskId === askId) runningAskId = null;
         if (askId) {
           lastAsk = { id: askId, result };
           // The reply below can be lost if the worker restarted while

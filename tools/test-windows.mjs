@@ -63,7 +63,7 @@ const store = (seed = {}) => {
   };
 };
 
-const calls = { scripts: [], badges: [], askOrder: [] };
+const calls = { scripts: [], badges: [], askOrder: [], opened: [], stops: [], running: null, openFails: null };
 const session = store();
 const chrome = {
   runtime: {
@@ -72,7 +72,16 @@ const chrome = {
     getManifest: () => ({ host_permissions: [] }),
   },
   storage: { session, sync: store(), local: store() },
-  sidePanel: { setPanelBehavior: async () => {}, open: async () => {} },
+  sidePanel: {
+    setPanelBehavior: async () => {},
+    // Chrome only opens the panel inside the user gesture: record each call as it happens.
+    open: (options) => {
+      calls.opened.push(options);
+      const fail = calls.openFails;
+      calls.openFails = null;
+      return fail ? Promise.reject(new Error(fail)) : Promise.resolve();
+    },
+  },
   action: {
     onClicked: on('action'),
     setBadgeText: async (o) => { calls.badges.push(o); },
@@ -87,6 +96,7 @@ const chrome = {
     getCurrent: async () => ({ id: FOCUSED }),
     getLastFocused: async () => ({ id: FOCUSED }),
     update: async () => {},
+    onRemoved: on('windowsRemoved'),
   },
   tabs: {
     onUpdated: on('tabsUpdated'), onActivated: on('tabsActivated'), onRemoved: on('tabsRemoved'),
@@ -110,11 +120,16 @@ const chrome = {
       if (message.type === 'TG_PING') return { ok: true, signedIn: true };
       if (message.type === 'TG_ASK_AND_WAIT') {
         calls.askOrder.push(`start ${message.payload.askId}`);
+        calls.running = message.payload.askId;
         await sleep(60);
+        calls.running = null;
         calls.askOrder.push(`end ${message.payload.askId}`);
         return { ok: true, text: `answer for ${message.payload.askId}` };
       }
       if (message.type === 'TG_STOP_GENERATION') {
+        // Like content/composer.js: a stop for another ask is ignored.
+        calls.stops.push(message.payload?.askId ?? null);
+        if (message.payload?.askId && message.payload.askId !== calls.running) return { ok: false };
         calls.stopped = (calls.stopped || 0) + 1;
         return { ok: true };
       }
@@ -204,6 +219,53 @@ calls.stopped = 0;
 await send({ type: 'TG_STOP_GENERATION', payload: { askId: 'someone-else' } });
 check('Stop does not stop another window\'s answer', calls.stopped === 0);
 
+// ------------------------------------------- Stop reaches the ask, wherever it is
+// Safari unloads the worker mid-answer: its memory of the running ask is gone,
+// so Stop forwards the ask id and the TerrierGPT tab decides.
+calls.stops.length = 0;
+await send({ type: 'TG_STOP_GENERATION', payload: { askId: 'ask-after-restart' } });
+check('Stop forwards its ask id even when the worker has no running ask in memory', calls.stops.includes('ask-after-restart'));
+
+calls.askOrder.length = 0;
+const runningOne = send({ type: 'TG_ASK', scope: { windowId: 1 }, payload: { instruction: 'One?', captures: [], askId: 'ask-run' } });
+const queuedTwo = send({ type: 'TG_ASK', scope: { windowId: 2 }, payload: { instruction: 'Two?', captures: [], askId: 'ask-queued' } });
+await sleep(10);
+await send({ type: 'TG_STOP_GENERATION', payload: { askId: 'ask-queued' } });
+const [ranOne, ranTwo] = await Promise.all([runningOne, queuedTwo]);
+check('Stop on a queued ask cancels it before it reaches the TerrierGPT tab', ranTwo?.reason === 'generation-stopped' && !calls.askOrder.includes('start ask-queued'));
+check('and the ask ahead of it still finishes', ranOne?.text === 'answer for ask-run');
+
+// ------------------------------------------- panel opens inside the user gesture
+const opensNow = (name, fire) => {
+  const before = calls.opened.length;
+  const done = fire();
+  check(`${name} opens the panel before awaiting anything`, calls.opened.length === before + 1);
+  return done;
+};
+await opensNow('Open TerrierGPT panel (context menu)', () => listeners.menus[0]({ menuItemId: 'tg-open-panel' }, tabs[2]));
+check('the re-read is still written for that window', session.data.reread?.windowId === 2);
+await opensNow('Open this page in TerrierGPT (context menu)', () => listeners.menus[0]({ menuItemId: 'tg-capture-page' }, tabs[0]));
+await opensNow('Ask TerrierGPT about the selection (context menu)', () => listeners.menus[0]({ menuItemId: 'tg-ask-selection' }, tabs[2]));
+await opensNow('the capture-page shortcut', () => listeners.commands[0]('capture-page', tabs[2]));
+await opensNow('the send-capture shortcut', () => listeners.commands[0]('send-capture', tabs[2]));
+check('a shortcut-queued ask still names its window', session.data.pendingAsk?.windowId === 2);
+check('a queued ask carries when it was queued', Number.isFinite(session.data.pendingAsk?.at));
+
+calls.scripts.length = 0;
+calls.openFails = '`sidePanel.open()` may only be called in response to a user gesture.';
+await listeners.menus[0]({ menuItemId: 'tg-open-panel' }, tabs[2]);
+const toastText = calls.scripts.find((s) => s.func?.name === 'showToast')?.args?.[0] || '';
+check('a panel that fails to open says so, not "cannot read this page"',
+  Boolean(toastText) && !toastText.includes('cannot read this kind of page') && /panel/i.test(toastText));
+
+// --------------------------------------------- closed windows and tabs let go
+await session.set({ 'captures:w2': [{ id: 'x', enabled: true, body: 'a' }], 'captures:t12': [{ id: 'y', enabled: true, body: 'b' }] });
+for (const fn of listeners.windowsRemoved || []) fn(2);
+for (const fn of listeners.tabsRemoved || []) fn(12, { windowId: 1, isWindowClosing: false });
+await sleep(10);
+check('closing a window drops its context', !('captures:w2' in session.data));
+check('closing a tab drops its docked context', !('captures:t12' in session.data));
+
 // ------------------------------------------------------------- the panel
 const panel = readFileSync(join(ROOT, 'sidepanel/sidepanel.js'), 'utf8');
 check('the panel learns its own window', panel.includes('chrome.windows.getCurrent()'));
@@ -213,6 +275,7 @@ check('another window\'s pick is ignored', panel.includes("/^TG_PICK/.test(messa
 check('another ask\'s streamed text is never shown', !panel.includes('|| !live.id'));
 check('only the asking window takes a queued ask', panel.includes('!isMine(DOCKED ? { tabId: target.tabId } : target)'));
 check('context is kept per window', panel.includes('loadScoped(scopeKey(await scopeReady))'));
+check('the panel ignores a queued ask older than two minutes', /pendingAsk\.at[\s\S]{0,80}PENDING_ASK_MAX_MS/.test(panel));
 
 console.log(failures ? `\n${failures} failing.` : '\nAll window tests passed.');
 process.exit(failures ? 1 : 0);

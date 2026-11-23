@@ -194,10 +194,35 @@ check('triage gets no posting format', postingInstruction(journalForAction('tria
 const panelSource = readFileSync(join(ROOT, 'sidepanel/sidepanel.js'), 'utf8');
 check('the panel posts the note draft, not the whole answer', panelSource.includes('postRequest({ field: spec.field, text: noteDraft') && !panelSource.includes('text: answerRaw, expectNumber'));
 
+/** The source of one top-level function in the panel, braces matched. */
+function fnBody(src, name) {
+  const start = src.search(new RegExp(`(async )?function ${name}\\(`));
+  if (start < 0) return '';
+  const open = src.indexOf('{', src.indexOf(')', start));
+  let depth = 0;
+  for (let i = open; i < src.length; i += 1) {
+    if (src[i] === '{') depth += 1;
+    else if (src[i] === '}' && --depth === 0) return src.slice(start, i + 1);
+  }
+  return '';
+}
+const postFn = fnBody(panelSource, 'postCurrentAnswer');
+check('a post remembers the page it was clicked on, not whatever the panel shows when it lands',
+  Boolean(postFn) && !/rememberAnswer\(shownURL/.test(postFn) && /const postURL = [^;]+;[\s\S]*await[\s\S]*rememberAnswer\(postURL/.test(postFn)
+  && postFn.indexOf('const postURL') < postFn.indexOf('await'));
+const handoffFn = fnBody(panelSource, 'sendHandoff');
+check('Send to CTS Recipes labels the answer with the asked ticket and URL',
+  Boolean(handoffFn) && /title: answerTicket/.test(handoffFn) && /url: answerURL/.test(handoffFn));
+
 const ready = postRequest({ field: 'comments', text: 'Thanks, this is fixed.', expectNumber: 'INC001' });
 check('post request keeps the note and the ticket', ready.ok && ready.text === 'Thanks, this is fixed.' && ready.expectNumber === 'INC001');
 check('post request refuses an empty note', postRequest({ field: 'comments', text: '  ', expectNumber: 'INC001' }).reason === 'empty-note');
 check('post request refuses a missing ticket', postRequest({ field: 'work_notes', text: 'Checked the queue.', expectNumber: '' }).reason === 'no-ticket');
+// The panel already split the note and the analyst may have edited it: post exactly what is shown.
+const shown = 'Note\nHere is what was done:\nReset the password and confirmed sign-in.\nLet me know if you\'d like any changes to the account.';
+check('post request does not re-split an already shown note', postRequest({ field: 'work_notes', text: shown, expectNumber: 'INC001' }).text === shown);
+const ruled = 'Step one: rebooted.\n---\nStep two: reimaged the drive and restored the profile.';
+check('post request keeps every block around a separator', postRequest({ field: 'work_notes', text: ruled, expectNumber: 'INC001' }).text.includes('Step one: rebooted.'));
 check('post request refuses any other field', postRequest({ field: 'state', text: 'no', expectNumber: 'INC001' }).reason === 'unknown-message');
 
 const chosen = choosePostResult([

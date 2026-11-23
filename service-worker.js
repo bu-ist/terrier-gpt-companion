@@ -13,7 +13,7 @@
 
 import { INSTANCES, getSettings } from './lib/config.js';
 import { extractFromPage, pickExtraction, presentPage } from './lib/extract.js';
-import { makeCapture, compose, loadCaptures, addCapture } from './lib/prompt.js';
+import { makeCapture, compose, loadCaptures, addCapture, capturesKey } from './lib/prompt.js';
 import { scopeKey, scopeOfTab } from './lib/scope.js';
 import { describe } from './lib/messages.js';
 import { chatURL, loadAgents, agentsFor, mergeDiscoveredAgents } from './lib/agents.js';
@@ -82,6 +82,14 @@ chrome.storage.session.onChanged.addListener((changes) => {
   if (Object.keys(changes).some((key) => key === 'captures' || key.startsWith('captures:'))) void refreshBadge();
 });
 chrome.tabs.onActivated.addListener(() => void refreshBadge());
+
+// A closed window's (Chrome) or tab's (Safari dock) context has no panel left to use it.
+chrome.windows?.onRemoved?.addListener((windowId) => {
+  chrome.storage.session.remove(capturesKey(scopeKey({ windowId }))).catch(() => {});
+});
+chrome.tabs.onRemoved?.addListener((tabId) => {
+  chrome.storage.session.remove(capturesKey(scopeKey({ tabId }))).catch(() => {});
+});
 
 /** The panel scope a tab belongs to: its window in Chrome, the tab itself where panels dock. */
 function panelScope(tab) {
@@ -403,13 +411,19 @@ async function askToTerrier({ instruction, captures, askId = null }, scope = nul
  */
 let askChain = Promise.resolve();
 let runningAskId = null;
+/** Asks still waiting their turn, and the ones Stop cancelled before they ran. */
+const queuedAsks = new Set();
+const cancelledAsks = new Set();
 
 function queueAskInWorker(payload, scope) {
   const askId = payload?.askId || null;
   const waiting = setInterval(() => void markAlive(askId, 'queued'), 20_000);
   void markAlive(askId, 'queued');
+  if (askId) queuedAsks.add(askId);
   const run = askChain.then(async () => {
     clearInterval(waiting);
+    queuedAsks.delete(askId);
+    if (askId && cancelledAsks.delete(askId)) return { ok: false, reason: 'generation-stopped' };
     runningAskId = askId;
     try {
       return await askToTerrier(payload, scope);
@@ -519,14 +533,39 @@ async function sessionState() {
   return { ok: true, known, signedIn: false, origin: instance.origin };
 }
 
-async function openPanel(tab) {
+/**
+ * Chrome opens a side panel only inside the user's gesture, and an `await`
+ * before `sidePanel.open` can lose it. So this is not async: with a known
+ * window it calls `sidePanel.open` at once. Callers start it before they
+ * touch storage.
+ */
+function openPanel(tab) {
   if (!HAS_SIDE_PANEL) {
-    const result = await toggleDock(tab, 'open');
-    if (!result.ok) throw new Error(result.reason);
-    return;
+    return toggleDock(tab, 'open').then((result) => {
+      if (!result.ok) throw new Error(result.reason);
+    });
   }
-  const windowId = tab?.windowId ?? (await chrome.windows.getCurrent()).id;
-  await chrome.sidePanel.open({ windowId });
+  if (Number.isInteger(tab?.windowId)) return chrome.sidePanel.open({ windowId: tab.windowId });
+  return (async () => chrome.sidePanel.open({ windowId: (await chrome.windows.getCurrent()).id }))();
+}
+
+/** Starts opening the panel now. Resolves to null once open, or to what went wrong. */
+function startOpenPanel(tab) {
+  let opening;
+  try {
+    opening = openPanel(tab);
+  } catch (error) {
+    opening = Promise.reject(error);
+  }
+  return Promise.resolve(opening).then(() => null, (error) => panelFailure(error));
+}
+
+/** The toast for a panel that did not open: the real reason, not "cannot read this page". */
+function panelFailure(error) {
+  const detail = String(error?.message || error || '').trim();
+  const known = describe(detail);
+  if (known !== describe('unknown-message')) return known;
+  return `The TerrierGPT panel did not open${detail ? ` (${detail})` : ''}. Click the TerrierGPT toolbar button to open it.`;
 }
 
 /** Opens, closes, or toggles the in-page panel on a tab. Safari only. */
@@ -549,11 +588,16 @@ async function toggleDock(tab, mode) {
   }
 }
 
-/** The panel picks this up, reads the page, and asks without leaving it. */
-async function queueAsk(tab, instruction, extra = {}) {
+/**
+ * The panel picks this up, reads the page, and asks without leaving it.
+ * `opening` defaults to opening the panel at the call, inside the user's gesture.
+ */
+async function queueAsk(tab, instruction, extra = {}, opening = startOpenPanel(tab)) {
   await chrome.storage.session.set({
     pendingAsk: {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      // A panel opened much later ignores it; see consumePending in the panel.
+      at: Date.now(),
       instruction: instruction ?? '',
       selection: extra.selection || '',
       url: extra.url || '',
@@ -564,11 +608,8 @@ async function queueAsk(tab, instruction, extra = {}) {
       windowId: tab?.windowId ?? null,
     },
   });
-  try {
-    await openPanel(tab);
-  } catch {
-    await toast(tab?.id, 'Open the TerrierGPT panel to see the answer.', 'error');
-  }
+  const failed = await opening;
+  if (failed) await toast(tab?.id, `${failed} The question waits there for two minutes.`, 'error');
 }
 
 // -------------------------------------------------------------------- feedback
@@ -603,10 +644,11 @@ function showToast(message, tone) {
     box.style.opacity = '1';
     box.style.transform = 'translateY(0)';
   });
+  // Errors stay long enough to read; a confirmation can go quickly.
   setTimeout(() => {
     box.style.opacity = '0';
     setTimeout(() => host.remove(), 250);
-  }, 2600);
+  }, tone === 'error' ? 8000 : 2600);
 }
 
 async function toast(tabId, message, tone = 'info') {
@@ -626,12 +668,11 @@ async function toast(tabId, message, tone = 'info') {
 
 chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === MENU.openPanel || info.menuItemId === MENU.capturePage) {
+    // Open first, inside the gesture; the panel hears the re-read when it lands.
+    const opening = startOpenPanel(tab);
     await chrome.storage.session.set({ reread: { at: Date.now(), tabId: tab?.id ?? null, windowId: tab?.windowId ?? null } });
-    try {
-      await openPanel(tab);
-    } catch {
-      await toast(tab?.id, describe('unsupported-page'), 'error');
-    }
+    const failed = await opening;
+    if (failed) await toast(tab?.id, failed, 'error');
     return;
   }
 
@@ -653,6 +694,8 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
   }
 
   if (info.menuItemId === MENU.askSelection) {
+    // Reading the page takes awaits, which would lose the gesture the panel needs.
+    const opening = startOpenPanel(tab);
     const read = await extractTab(tab);
     if (!read.ok) {
       await toast(tab?.id, describe(read.reason), 'error');
@@ -666,7 +709,7 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
       selection: read.page.selection,
       url: read.page.url,
       label: 'Selection',
-    });
+    }, opening);
     return;
   }
 
@@ -677,21 +720,22 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
 // ------------------------------------------------------------------- commands
 
 // Keyboard commands do not exist on iOS.
-chrome.commands?.onCommand.addListener(async (command) => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+chrome.commands?.onCommand.addListener(async (command, givenTab) => {
+  // Chrome passes the tab, so the panel opens inside the shortcut's gesture.
+  const wantsPanel = command === 'capture-page' || command === 'send-capture';
+  const early = wantsPanel && givenTab ? startOpenPanel(givenTab) : null;
+  const tab = givenTab ?? (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
 
   if (command === 'capture-page') {
+    const opening = early ?? startOpenPanel(tab);
     await chrome.storage.session.set({ reread: { at: Date.now(), tabId: tab?.id ?? null, windowId: tab?.windowId ?? null } });
-    try {
-      await openPanel(tab);
-    } catch {
-      await toast(tab?.id, describe('unsupported-page'), 'error');
-    }
+    const failed = await opening;
+    if (failed) await toast(tab?.id, failed, 'error');
     return;
   }
 
   if (command === 'send-capture') {
-    await queueAsk(tab, '');
+    await queueAsk(tab, '', {}, early ?? undefined);
   }
 });
 
@@ -1025,10 +1069,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         case 'TG_STOP_GENERATION': {
           // Stop only the answer this panel is waiting for, never another window's.
           const wanted = message.payload?.askId || null;
+          // Still waiting its turn: drop it before it reaches the TerrierGPT tab.
+          if (wanted && queuedAsks.has(wanted) && wanted !== runningAskId) {
+            cancelledAsks.add(wanted);
+            sendResponse({ ok: true, cancelled: true });
+            break;
+          }
+          // Safari may have unloaded the worker since the ask started, so its
+          // memory of the running ask is not trusted. The ask id always goes to
+          // the tab, which stops only the ask it is running (content/composer.js).
           const { workerTabId } = await chrome.storage.session.get('workerTabId');
-          if (workerTabId && (!wanted || wanted === runningAskId)) {
+          if (workerTabId) {
             try {
-              await chrome.tabs.sendMessage(workerTabId, { type: 'TG_STOP_GENERATION' });
+              await chrome.tabs.sendMessage(workerTabId, { type: 'TG_STOP_GENERATION', payload: { askId: wanted } });
             } catch {}
           }
           sendResponse({ ok: true });
